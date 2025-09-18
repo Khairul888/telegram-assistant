@@ -1,138 +1,34 @@
-# =============================================================================
-# TELEGRAM ASSISTANT - PYTHON DEPENDENCIES
-# =============================================================================
-# Core web framework and async support
-
+# Minimal requirements for Vercel deployment
+# Core FastAPI and async support
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+uvicorn==0.24.0
 pydantic==2.5.0
 pydantic-settings==2.1.0
 
-# =============================================================================
-# TELEGRAM BOT INTEGRATION
-# =============================================================================
-python-telegram-bot==20.7
-telegram==0.0.1
-
-# =============================================================================
-# GOOGLE SERVICES INTEGRATION
-# =============================================================================
-# Google AI (Gemini)
-google-generativeai==0.3.2
-
-# Google Drive, Docs, Sheets APIs
-google-api-python-client==2.108.0
-google-auth==2.23.4
-google-auth-oauthlib==1.1.0
-google-auth-httplib2==0.1.1
-
-# =============================================================================
-# VECTOR DATABASE INTEGRATION
-# =============================================================================
-# Pinecone (Option A - matches original n8n workflow)
-pinecone-client==2.2.4
-
-# Supabase (Option B - all-in-one alternative)
-supabase==2.3.0
-vecs==0.4.0
-
-# Vector and embedding utilities
-numpy==1.24.3
-sentence-transformers==2.2.2
-
-# =============================================================================
-# FILE PROCESSING
-# =============================================================================
-# Document processing
-python-docx==1.1.0
-PyPDF2==3.0.1
-python-magic==0.4.27
-python-magic-bin==0.4.14  # Windows binary
-
-# Excel/CSV processing
-pandas==2.1.3
-openpyxl==3.1.2
-xlrd==2.0.1
-
-# Image processing
-Pillow==10.1.0
-pytesseract==0.3.10  # OCR capabilities
-
-# Text processing
-nltk==3.8.1
-textstat==0.7.3
-
-# =============================================================================
-# HTTP CLIENT AND ASYNC UTILITIES
-# =============================================================================
+# HTTP client
 httpx==0.25.2
-aiohttp==3.9.1
-aiofiles==23.2.1
-asyncio==3.4.3
 
-# =============================================================================
-# DATABASE AND ORM
-# =============================================================================
+# Database (lightweight)
 sqlalchemy==2.0.23
-asyncpg==0.29.0  # PostgreSQL async driver
-sqlite3==0.4.1   # SQLite for development
-alembic==1.12.1  # Database migrations
+aiosqlite==0.19.0
 
-# =============================================================================
-# ENVIRONMENT AND CONFIGURATION
-# =============================================================================
-python-dotenv==1.0.0
-pyyaml==6.0.1
-toml==0.10.2
+# Logging
+loguru==0.7.2
 
-# =============================================================================
-# SECURITY AND VALIDATION
-# =============================================================================
-cryptography==41.0.7
-passlib[bcrypt]==1.7.4
-python-jose[cryptography]==3.3.0
+# File handling
 python-multipart==0.0.6
 
-# =============================================================================
-# LOGGING AND MONITORING
-# =============================================================================
-loguru==0.7.2
-sentry-sdk[fastapi]==1.38.0  # Error tracking (optional)
-prometheus-client==0.19.0   # Metrics (optional)
+# Serverless adapter
+mangum==0.17.0
 
-# =============================================================================
-# TESTING FRAMEWORK
-# =============================================================================
-pytest==7.4.3
-pytest-asyncio==0.21.1
-pytest-mock==3.12.0
-httpx==0.25.2  # For testing HTTP endpoints
-faker==20.1.0  # Generate fake data for testing
+# Google AI (Essential)
+google-generativeai==0.3.2
 
-# =============================================================================
-# DEVELOPMENT TOOLS
-# =============================================================================
-black==23.11.0      # Code formatting
-isort==5.12.0       # Import sorting
-flake8==6.1.0       # Linting
-mypy==1.7.1         # Type checking
-pre-commit==3.6.0   # Git hooks
+# Pinecone (Essential)
+pinecone-client==2.2.4
 
-# =============================================================================
-# OPTIONAL SERVICES
-# =============================================================================
-# Cloudinary (image processing and storage)
-cloudinary==1.36.0
+# Essential document processing
+PyPDF2==3.0.1
 
-# Redis (for caching - if using Railway/other hosting with Redis)
-redis==5.0.1
-aioredis==2.0.1
-
-# =============================================================================
-# SERVERLESS DEPLOYMENT
-# =============================================================================
-# Vercel-specific
-mangum==0.17.0  # ASGI adapter for serverless
-
-# General serverless utilities
-serverless-wsgi==3.0.3
+# JSON handling
+python-dotenv==1.0.0
