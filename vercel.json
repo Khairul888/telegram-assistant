@@ -19,10 +19,5 @@
   "env": {
     "ENVIRONMENT": "production"
   },
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.9"
-    }
-  },
   "regions": ["iad1"]
 }

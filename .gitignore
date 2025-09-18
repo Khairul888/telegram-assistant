@@ -7,6 +7,11 @@
 .env.local
 .env.*.local
 .env.example
+DEPLOYMENT.md
+PRE_DEVELOPMENT_CHECKLIST.md
+PROJECT_STRUCTURE.md
+PROJECT_DOCUMENTATION.md
+SETUP_INSTRUCTIONS.md
 
 # Google Service Account JSON files
 *.json
