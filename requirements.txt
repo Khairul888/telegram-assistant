@@ -1,34 +1,4 @@
-# Minimal requirements for Vercel deployment
-# Core FastAPI and async support
+# Absolute minimal requirements for Vercel deployment
 fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
-
-# HTTP client
-httpx==0.25.2
-
-# Database (lightweight)
-sqlalchemy==2.0.23
-aiosqlite==0.19.0
-
-# Logging
-loguru==0.7.2
-
-# File handling
-python-multipart==0.0.6
-
-# Serverless adapter
 mangum==0.17.0
-
-# Google AI (Essential)
-google-generativeai==0.3.2
-
-# Pinecone (Essential)
-pinecone-client==2.2.4
-
-# Essential document processing
-PyPDF2==3.0.1
-
-# JSON handling
-python-dotenv==1.0.0
+pydantic==2.5.0
