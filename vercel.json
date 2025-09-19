@@ -16,6 +16,10 @@
     {
       "src": "api/telegram-webhook-minimal.py",
       "use": "@vercel/python"
+    },
+    {
+      "src": "api/test-simple.py",
+      "use": "@vercel/python"
     }
   ],
   "routes": [
@@ -30,6 +34,10 @@
     {
       "src": "/api/telegram-webhook-minimal",
       "dest": "/api/telegram-webhook-minimal.py"
+    },
+    {
+      "src": "/api/test-simple",
+      "dest": "/api/test-simple.py"
     },
     {
       "src": "/",
