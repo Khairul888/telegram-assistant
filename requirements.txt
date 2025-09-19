@@ -1,4 +1,0 @@
-# Absolute minimal requirements for Vercel deployment
-fastapi==0.104.1
-mangum==0.17.0
-pydantic==2.5.0
