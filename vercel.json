@@ -36,6 +36,10 @@
     {
       "src": "api/debug.py",
       "use": "@vercel/python"
+    },
+    {
+      "src": "api/bot.py",
+      "use": "@vercel/python"
     }
   ],
   "routes": [
@@ -70,6 +74,10 @@
     {
       "src": "/api/debug",
       "dest": "/api/debug.py"
+    },
+    {
+      "src": "/api/bot",
+      "dest": "/api/bot.py"
     },
     {
       "src": "/",
