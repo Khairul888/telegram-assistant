@@ -6,8 +6,23 @@ Loads environment variables and provides centralized config access.
 import os
 from typing import Optional, List
 from pathlib import Path
-from pydantic_settings import BaseSettings
-from pydantic import field_validator, Field
+try:
+    from pydantic_settings import BaseSettings
+    from pydantic import field_validator, Field
+    PYDANTIC_AVAILABLE = True
+except ImportError:
+    PYDANTIC_AVAILABLE = False
+    # Fallback for basic configuration
+    class BaseSettings:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+    def field_validator(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+    def Field(*args, **kwargs):
+        return kwargs.get('default')
 
 
 class Settings(BaseSettings):
@@ -207,7 +222,23 @@ class Settings(BaseSettings):
 # =============================================================================
 def get_settings() -> Settings:
     """Get application settings (cached)."""
-    return Settings()
+    if PYDANTIC_AVAILABLE:
+        return Settings()
+    else:
+        # Fallback: basic environment variable loading
+        return Settings(
+            app_name="Telegram Assistant",
+            version="1.0.0",
+            environment=os.getenv("ENVIRONMENT", "development"),
+            debug=os.getenv("DEBUG", "True").lower() == "true",
+            log_level=os.getenv("LOG_LEVEL", "INFO"),
+            telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            google_gemini_api_key=os.getenv("GOOGLE_GEMINI_API_KEY", ""),
+            google_drive_folder_id=os.getenv("GOOGLE_DRIVE_FOLDER_ID", ""),
+            max_file_size_mb=int(os.getenv("MAX_FILE_SIZE_MB", "50")),
+            supported_file_types=os.getenv("SUPPORTED_FILE_TYPES", "pdf,docx,txt,jpg,jpeg,png,xlsx,csv").split(",")
+        )
 
 
 # Global settings instance

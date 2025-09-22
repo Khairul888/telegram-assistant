@@ -10,9 +10,15 @@ from pathlib import Path
 import csv
 import json
 
-import pandas as pd
-import openpyxl
-from openpyxl.utils.dataframe import dataframe_to_rows
+try:
+    import pandas as pd
+    import openpyxl
+    from openpyxl.utils.dataframe import dataframe_to_rows
+    EXCEL_DEPENDENCIES_AVAILABLE = True
+except ImportError:
+    EXCEL_DEPENDENCIES_AVAILABLE = False
+    pd = None
+    openpyxl = None
 
 from ..core.config import settings
 from ..core.logger import get_logger
@@ -35,6 +41,7 @@ class ExcelProcessor:
         self.max_size_mb = settings.max_file_size_mb
         self.max_rows = 10000  # Limit for processing large files
         self.max_cols = 100   # Limit for very wide spreadsheets
+        self.dependencies_available = EXCEL_DEPENDENCIES_AVAILABLE
 
     def _validate_file(self, file_path: Path) -> Tuple[bool, str]:
         """
@@ -367,6 +374,16 @@ Please provide analysis as JSON:
 
         try:
             logger.info(f"Starting Excel/CSV processing for: {file_path.name}")
+
+            # Check if dependencies are available
+            if not self.dependencies_available:
+                return {
+                    'success': False,
+                    'file_name': file_path.name,
+                    'error': 'Excel processing dependencies not available in this environment',
+                    'processor': 'excel_processor',
+                    'timestamp': datetime.now().isoformat()
+                }
 
             # Validate file
             is_valid, validation_message = self._validate_file(file_path)

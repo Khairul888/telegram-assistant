@@ -13,10 +13,17 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
-from src.core.logger import get_logger
-from src.workflows.document_ingestion import document_ingestion_workflow
-
-logger = get_logger(__name__)
+try:
+    from src.core.logger import get_logger
+    from src.workflows.document_ingestion import document_ingestion_workflow
+    DEPENDENCIES_AVAILABLE = True
+    logger = get_logger(__name__)
+except ImportError as e:
+    DEPENDENCIES_AVAILABLE = False
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Import error: {e}")
+    document_ingestion_workflow = None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -182,6 +189,10 @@ class handler(BaseHTTPRequestHandler):
             True if processing was triggered successfully
         """
         try:
+            if not DEPENDENCIES_AVAILABLE or document_ingestion_workflow is None:
+                logger.warning("Document processing dependencies not available")
+                return False
+
             # Since we're in a serverless environment, we need to process synchronously
             # In a persistent environment, this would be queued for background processing
 

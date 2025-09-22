@@ -10,11 +10,20 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
-from src.core.logger import get_logger
-from src.ai.gemini_service import gemini_service
-from src.workflows.document_ingestion import document_ingestion_workflow
-
-logger = get_logger(__name__)
+try:
+    from src.core.logger import get_logger
+    from src.ai.gemini_service import gemini_service
+    from src.workflows.document_ingestion import document_ingestion_workflow
+    DEPENDENCIES_AVAILABLE = True
+    logger = get_logger(__name__)
+except ImportError as e:
+    DEPENDENCIES_AVAILABLE = False
+    # Fallback logger
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"Import error: {e}")
+    gemini_service = None
+    document_ingestion_workflow = None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -162,7 +171,10 @@ class handler(BaseHTTPRequestHandler):
 
             else:
                 # Generate AI response for general messages
-                response_text = await self._generate_ai_response(user_content, first_name)
+                if DEPENDENCIES_AVAILABLE:
+                    response_text = await self._generate_ai_response(user_content, first_name)
+                else:
+                    response_text = f"🤖 Hi {first_name}! I'm currently running in limited mode. Some features may not be available. Try using /help for available commands."
 
             # Send response
             await self._send_telegram_message(chat_id, response_text)
