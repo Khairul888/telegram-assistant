@@ -1294,19 +1294,20 @@ Text content:
             print(f"Traceback: {traceback.format_exc()}")
 
     async def _store_document_async(self, user_id: str, file_name: str, doc_type: str, extracted_data: dict):
-        """Async method to store document in database."""
+        """Async method to store document in Supabase database."""
         try:
-            # Import database components
-            import sys
-            import os
+            # Use the existing Supabase client from job queue
+            global job_queue
+            if not job_queue or not job_queue.available:
+                print("❌ Supabase client not available")
+                return
 
-            # Add src to path if not already there
-            src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
-            if src_path not in sys.path:
-                sys.path.append(src_path)
+            supabase = job_queue.supabase
 
-            from core.database import get_db_session
-            from models.document import Document
+            # Check if documents table exists
+            if not self._ensure_documents_table_exists():
+                print("❌ Documents table not properly configured")
+                return
 
             # Create unique file_id
             import hashlib
@@ -1316,68 +1317,78 @@ Text content:
             # Extract relevant data
             summary = extracted_data.get('summary', '')
             extracted_text = extracted_data.get('extracted_text', '')
-            keywords = []
+            keywords = extracted_data.get('keywords', [])
 
-            # Try to extract keywords from summary if available
-            if isinstance(extracted_data.get('keywords'), list):
-                keywords = extracted_data['keywords']
+            # Prepare document data for Supabase
+            document_data = {
+                'file_id': file_id,
+                'original_filename': file_name,
+                'file_type': doc_type,
+                'file_size_bytes': len(extracted_text) if extracted_text else 0,
+                'mime_type': f"application/{doc_type}",
+                'extracted_text': extracted_text,
+                'overarching_theme': summary,
+                'keywords': keywords,
+                'processing_status': 'completed',
+                'metadata_json': {
+                    'user_id': user_id,
+                    'document_type': doc_type,
+                    'extracted_data': extracted_data,
+                    'telegram_user_id': user_id
+                },
+                'created_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'updated_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
 
-            async with get_db_session() as session:
-                # Check if document already exists for this user
-                from sqlalchemy import select, and_
+            # Check if document already exists
+            existing = supabase.table('documents').select('*').eq('original_filename', file_name).eq('metadata_json->>telegram_user_id', user_id).execute()
 
-                existing_doc_query = select(Document).where(
-                    and_(
-                        Document.original_filename == file_name,
-                        Document.metadata_json['telegram_user_id'].astext == user_id
-                    )
-                )
+            if existing.data:
+                # Update existing document
+                document_data['updated_at'] = time.strftime('%Y-%m-%d %H:%M:%S')
+                result = supabase.table('documents').update(document_data).eq('id', existing.data[0]['id']).execute()
+                print(f"💾 Updated existing document: {file_name}")
+            else:
+                # Create new document
+                result = supabase.table('documents').insert(document_data).execute()
+                print(f"💾 Created new document: {file_name}")
 
-                result = await session.execute(existing_doc_query)
-                existing = result.scalar_one_or_none()
-
-                if existing:
-                    # Update existing document
-                    existing.extracted_text = extracted_text
-                    existing.overarching_theme = summary
-                    existing.keywords = keywords
-                    existing.processing_status = "completed"
-                    existing.metadata_json = {
-                        'user_id': user_id,
-                        'document_type': doc_type,
-                        'extracted_data': extracted_data,
-                        'telegram_user_id': user_id
-                    }
-                    print(f"💾 Updated existing document: {file_name}")
-                else:
-                    # Create new document
-                    document = Document(
-                        file_id=file_id,
-                        original_filename=file_name,
-                        file_type=doc_type,
-                        file_size_bytes=len(extracted_text) if extracted_text else 0,
-                        mime_type=f"application/{doc_type}",
-                        extracted_text=extracted_text,
-                        overarching_theme=summary,
-                        keywords=keywords,
-                        processing_status="completed",
-                        metadata_json={
-                            'user_id': user_id,
-                            'document_type': doc_type,
-                            'extracted_data': extracted_data,
-                            'telegram_user_id': user_id
-                        }
-                    )
-                    session.add(document)
-                    print(f"💾 Created new document: {file_name}")
-
-                await session.commit()
+            if result.data:
                 print(f"✅ Successfully stored document in database: {file_name}")
+            else:
+                print(f"⚠️ Document storage returned no data: {file_name}")
 
         except Exception as e:
             print(f"❌ Error storing document in database: {e}")
             import traceback
             print(f"🚨 Traceback: {traceback.format_exc()}")
+
+    def _ensure_documents_table_exists(self):
+        """Ensure the documents table exists in Supabase with correct schema."""
+        try:
+            global job_queue
+            if not job_queue or not job_queue.available:
+                print("❌ Supabase client not available for table creation")
+                return False
+
+            supabase = job_queue.supabase
+
+            # Check if documents table exists by trying to query it
+            try:
+                test_result = supabase.table('documents').select('id').limit(1).execute()
+                print("✅ Documents table exists")
+                return True
+            except Exception as e:
+                print(f"⚠️ Documents table may not exist or has wrong schema: {e}")
+                print("📋 You need to run the SQL setup in your Supabase dashboard:")
+                print("📋 1. Go to your Supabase project → SQL Editor")
+                print("📋 2. Run the SQL from documents_table_update.sql")
+                print("📋 3. Then reupload your document")
+                return False
+
+        except Exception as e:
+            print(f"❌ Error checking documents table: {e}")
+            return False
 
     async def _download_telegram_file(self, file_id: str) -> bytes:
         """Download file from Telegram API."""
@@ -1617,49 +1628,42 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
             return "Error accessing document context."
 
     async def _get_user_documents_async(self, user_id: str) -> list:
-        """Async method to retrieve user documents from database."""
+        """Async method to retrieve user documents from Supabase database."""
         try:
-            # Import database components
-            import sys
-            import os
+            # Use the existing Supabase client from job queue
+            global job_queue
+            if not job_queue or not job_queue.available:
+                print("❌ Supabase client not available")
+                return []
 
-            # Add src to path if not already there
-            src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
-            if src_path not in sys.path:
-                sys.path.append(src_path)
+            supabase = job_queue.supabase
 
-            from core.database import get_db_session
-            from models.document import Document
-            from sqlalchemy import select, and_, desc
+            # Query documents for this user, ordered by creation date (newest first)
+            result = supabase.table('documents').select('*').eq('metadata_json->>telegram_user_id', user_id).order('created_at', desc=True).limit(5).execute()
 
-            async with get_db_session() as session:
-                # Query documents for this user, ordered by creation date (newest first)
-                query = select(Document).where(
-                    Document.metadata_json['telegram_user_id'].astext == user_id
-                ).order_by(desc(Document.created_at)).limit(5)  # Get last 5 documents
+            if not result.data:
+                print(f"📚 No documents found for user: {user_id}")
+                return []
 
-                result = await session.execute(query)
-                documents = result.scalars().all()
+            # Convert to dictionary format for easier handling
+            doc_list = []
+            for doc in result.data:
+                # Extract metadata from the JSONB field
+                metadata = doc.get('metadata_json', {})
+                extracted_data = metadata.get('extracted_data', {})
 
-                # Convert to dictionary format for easier handling
-                doc_list = []
-                for doc in documents:
-                    # Extract metadata from the JSONB field
-                    metadata = doc.metadata_json or {}
-                    extracted_data = metadata.get('extracted_data', {})
+                doc_dict = {
+                    'file_name': doc.get('original_filename', 'Unknown'),
+                    'document_type': metadata.get('document_type', doc.get('file_type', 'document')),
+                    'summary': extracted_data.get('summary', doc.get('overarching_theme', 'No summary')),
+                    'extracted_text': doc.get('extracted_text', ''),
+                    'keywords': doc.get('keywords', []),
+                    'created_at': doc.get('created_at')
+                }
+                doc_list.append(doc_dict)
 
-                    doc_dict = {
-                        'file_name': doc.original_filename,
-                        'document_type': metadata.get('document_type', doc.file_type),
-                        'summary': extracted_data.get('summary', doc.overarching_theme or 'No summary'),
-                        'extracted_text': doc.extracted_text or '',
-                        'keywords': doc.keywords or [],
-                        'created_at': doc.created_at.isoformat() if doc.created_at else None
-                    }
-                    doc_list.append(doc_dict)
-
-                print(f"📚 Retrieved {len(doc_list)} documents from database")
-                return doc_list
+            print(f"📚 Retrieved {len(doc_list)} documents from database")
+            return doc_list
 
         except Exception as e:
             print(f"❌ Error retrieving documents from database: {e}")
