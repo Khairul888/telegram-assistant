@@ -1190,36 +1190,75 @@ Return a brief summary of the main travel details."""
     def _process_pdf_document(self, file_data: bytes, file_name: str) -> dict:
         """Process PDF document with Gemini AI using direct file upload."""
         try:
-            print("📄 Processing PDF document...")
+            print("📄 Processing PDF document with Gemini Vision...")
 
-            # For PDFs, we'll use Gemini's file upload capability
-            # But since we're in a serverless environment, let's provide text-based analysis
-            doc_type = self._classify_file_simple(file_name)
+            # Use Gemini Vision to extract text from PDF
+            import base64
+            pdf_b64 = base64.b64encode(file_data).decode('utf-8')
 
-            # Create a mock successful response for PDFs
-            # In production, you'd use Google's Document AI or convert PDF to images
-            summary_text = f"PDF document '{file_name}' has been uploaded and classified as {doc_type}. "
+            # Create prompt for PDF text extraction
+            extraction_prompt = """Extract all text content from this PDF document. Focus on:
+1. All readable text (headings, body text, captions)
+2. Important details like dates, times, locations, names, numbers
+3. Maintain structure and organization where possible
 
-            if doc_type == "itinerary":
-                summary_text += "This appears to be a travel itinerary. You can ask me questions about your travel plans."
-            elif doc_type == "receipt":
-                summary_text += "This appears to be a receipt. You can ask me about expenses and spending."
-            elif doc_type == "flight_ticket":
-                summary_text += "This appears to be a flight ticket. You can ask me about your flight details."
+Please provide the extracted text content clearly and completely."""
+
+            # Build request for Gemini Vision API
+            contents = [
+                {
+                    "parts": [
+                        {"text": extraction_prompt},
+                        {
+                            "inline_data": {
+                                "mime_type": "application/pdf",
+                                "data": pdf_b64
+                            }
+                        }
+                    ]
+                }
+            ]
+
+            # Make request to Gemini
+            import google.generativeai as genai
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(contents)
+
+            if response.text:
+                extracted_text = response.text.strip()
+                print(f"✅ Extracted {len(extracted_text)} characters from PDF")
+
+                # Now analyze the extracted text for document type and insights
+                doc_type = self._classify_file_simple(file_name)
+                analysis_prompt = f"""Analyze this extracted text from a {doc_type} document and provide:
+1. A concise summary (2-3 sentences)
+2. Key information extracted
+3. Document type classification
+
+Text content:
+{extracted_text[:3000]}"""  # Limit to avoid token limits
+
+                analysis_response = model.generate_content(analysis_prompt)
+                analysis_text = analysis_response.text if analysis_response.text else "Document processed successfully"
+
+                return {
+                    "success": True,
+                    "document_type": doc_type,
+                    "data": {
+                        "summary": analysis_text,
+                        "extracted_text": extracted_text,
+                        "details": f"PDF document processed: {file_name}",
+                        "file_type": "pdf",
+                        "text_length": len(extracted_text)
+                    },
+                    "confidence": 0.85
+                }
             else:
-                summary_text += "This appears to be a travel-related document. You can ask me questions about it."
-
-            return {
-                "success": True,
-                "document_type": doc_type,
-                "data": {
-                    "summary": summary_text,
-                    "details": f"PDF document processed: {file_name}",
-                    "file_type": "pdf",
-                    "processing_note": "PDF text extraction will be implemented in future updates"
-                },
-                "confidence": 0.75
-            }
+                print("⚠️ No text extracted from PDF")
+                return {
+                    "success": False,
+                    "error": "Could not extract text from PDF document"
+                }
 
         except Exception as e:
             print(f"❌ PDF processing error: {str(e)}")
@@ -1456,7 +1495,16 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
             context = "User's uploaded documents:\n"
             for doc in user_docs[-3:]:  # Last 3 documents
                 summary = doc['extracted_data'].get('summary', 'No summary')
+                extracted_text = doc['extracted_data'].get('extracted_text', '')
+
+                # Include both summary and extracted text for better context
                 context += f"- {doc['file_name']} ({doc['document_type']}): {summary}\n"
+
+                # Add extracted text content if available (limit to prevent token overflow)
+                if extracted_text:
+                    text_snippet = extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text
+                    context += f"  Content: {text_snippet}\n"
+
                 print(f"📄 Added doc to context: {doc['file_name']} - {summary[:50]}...")
 
             print(f"📚 Final context: {context[:200]}...")
