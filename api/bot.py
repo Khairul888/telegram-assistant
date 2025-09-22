@@ -19,7 +19,12 @@ sys.path.append(str(Path(__file__).parent.parent / 'src'))
 try:
     from supabase import create_client, Client
     import google.generativeai as genai
+    from googleapiclient.discovery import build
+    from google.oauth2.service_account import Credentials
+    from googleapiclient.http import MediaIoBaseDownload
     from dotenv import load_dotenv
+    import io
+    import json
     DEPENDENCIES_AVAILABLE = True
 except ImportError as e:
     DEPENDENCIES_AVAILABLE = False
@@ -93,7 +98,7 @@ class SimpleGeminiService:
             api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
             if api_key:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.model = genai.GenerativeModel('gemini-2.5-flash')
                 self.available = True
             else:
                 self.available = False
@@ -116,9 +121,80 @@ class SimpleGeminiService:
             return f"AI service error: {str(e)}"
 
 
+class GoogleDriveService:
+    """Google Drive API service for file operations."""
+
+    def __init__(self):
+        if DEPENDENCIES_AVAILABLE:
+            try:
+                # Get service account credentials
+                service_account_path = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON_PATH')
+
+                if service_account_path and os.path.exists(service_account_path):
+                    credentials = Credentials.from_service_account_file(
+                        service_account_path,
+                        scopes=['https://www.googleapis.com/auth/drive.readonly']
+                    )
+                    self.service = build('drive', 'v3', credentials=credentials)
+                    self.available = True
+                else:
+                    # Try to load from environment variable as JSON string
+                    service_account_json = os.getenv('GOOGLE_SERVICE_ACCOUNT_JSON')
+                    if service_account_json:
+                        service_account_info = json.loads(service_account_json)
+                        credentials = Credentials.from_service_account_info(
+                            service_account_info,
+                            scopes=['https://www.googleapis.com/auth/drive.readonly']
+                        )
+                        self.service = build('drive', 'v3', credentials=credentials)
+                        self.available = True
+                    else:
+                        self.available = False
+                        print("No Google service account credentials found")
+            except Exception as e:
+                self.available = False
+                print(f"Error initializing Google Drive service: {e}")
+        else:
+            self.available = False
+
+    async def download_file(self, file_id: str) -> bytes:
+        """Download file content from Google Drive."""
+        if not self.available:
+            raise Exception("Google Drive service not available")
+
+        try:
+            request = self.service.files().get_media(fileId=file_id)
+            file_io = io.BytesIO()
+            downloader = MediaIoBaseDownload(file_io, request)
+
+            done = False
+            while done is False:
+                status, done = downloader.next_chunk()
+
+            file_io.seek(0)
+            return file_io.read()
+        except Exception as e:
+            raise Exception(f"Error downloading file from Drive: {str(e)}")
+
+    async def get_file_info(self, file_id: str) -> dict:
+        """Get file metadata from Google Drive."""
+        if not self.available:
+            return {"error": "Google Drive service not available"}
+
+        try:
+            file_info = self.service.files().get(
+                fileId=file_id,
+                fields='id,name,mimeType,size,createdTime,modifiedTime'
+            ).execute()
+            return file_info
+        except Exception as e:
+            return {"error": f"Error getting file info: {str(e)}"}
+
+
 # Initialize services (will be done lazily)
 job_queue = None
 gemini_service = None
+drive_service = None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -128,11 +204,13 @@ class handler(BaseHTTPRequestHandler):
         """Handle POST requests from Telegram webhook."""
         try:
             # Initialize services if not already done
-            global job_queue, gemini_service
+            global job_queue, gemini_service, drive_service
             if job_queue is None:
                 job_queue = SupabaseJobQueue()
             if gemini_service is None:
                 gemini_service = SimpleGeminiService()
+            if drive_service is None:
+                drive_service = GoogleDriveService()
             # Read the request body
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -178,11 +256,13 @@ class handler(BaseHTTPRequestHandler):
         """Handle GET requests for status."""
         try:
             # Initialize services if not already done
-            global job_queue, gemini_service
+            global job_queue, gemini_service, drive_service
             if job_queue is None:
                 job_queue = SupabaseJobQueue()
             if gemini_service is None:
                 gemini_service = SimpleGeminiService()
+            if drive_service is None:
+                drive_service = GoogleDriveService()
 
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -196,7 +276,8 @@ class handler(BaseHTTPRequestHandler):
                 "dependencies_available": DEPENDENCIES_AVAILABLE,
                 "services": {
                     "gemini": gemini_service.available if gemini_service else False,
-                    "job_queue": job_queue.available if job_queue else False
+                    "job_queue": job_queue.available if job_queue else False,
+                    "google_drive": drive_service.available if drive_service else False
                 }
             }
             self.wfile.write(json.dumps(response).encode('utf-8'))

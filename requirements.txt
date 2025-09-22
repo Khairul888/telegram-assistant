@@ -1,5 +1,5 @@
-# Minimal Vercel deployment - Phase 1
-# Target size: ~20MB to stay well under 250MB limit
+# Phase 2 deployment - Google Drive + Vision Processing
+# Target size: ~40MB to stay well under 250MB limit
 
 # Core AI service
 google-generativeai==0.3.2
@@ -9,3 +9,11 @@ python-dotenv==1.0.0
 
 # Database & job queue
 supabase==2.1.0
+
+# Google Drive API
+google-api-python-client==2.88.0
+google-auth-httplib2==0.1.0
+google-auth-oauthlib==1.0.0
+
+# Image processing
+Pillow==10.0.0
