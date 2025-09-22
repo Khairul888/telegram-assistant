@@ -1267,28 +1267,117 @@ Text content:
     def _store_processed_document(self, user_id: str, file_name: str, doc_type: str, extracted_data: dict):
         """Store processed document results in memory for querying."""
         try:
-            # For now, store in a simple global variable
-            # In production, this would go to database
-            global processed_documents
+            # Store in database for persistence across serverless function invocations
+            import asyncio
 
-            if 'processed_documents' not in globals():
-                processed_documents = {}
+            # Run the async storage in a separate task
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # If loop is already running, schedule the task
+                    loop.create_task(self._store_document_async(user_id, file_name, doc_type, extracted_data))
+                else:
+                    # If no loop is running, run the task directly
+                    loop.run_until_complete(self._store_document_async(user_id, file_name, doc_type, extracted_data))
+            except RuntimeError:
+                # Fallback: create new event loop
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                new_loop.run_until_complete(self._store_document_async(user_id, file_name, doc_type, extracted_data))
+                new_loop.close()
 
-            if user_id not in processed_documents:
-                processed_documents[user_id] = []
-
-            document_entry = {
-                'file_name': file_name,
-                'document_type': doc_type,
-                'extracted_data': extracted_data,
-                'timestamp': datetime.now().isoformat()
-            }
-
-            processed_documents[user_id].append(document_entry)
             print(f"Stored document for user {user_id}: {file_name}")
 
         except Exception as e:
             print(f"Error storing document: {e}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+
+    async def _store_document_async(self, user_id: str, file_name: str, doc_type: str, extracted_data: dict):
+        """Async method to store document in database."""
+        try:
+            # Import database components
+            import sys
+            import os
+
+            # Add src to path if not already there
+            src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
+            if src_path not in sys.path:
+                sys.path.append(src_path)
+
+            from core.database import get_db_session
+            from models.document import Document
+
+            # Create unique file_id
+            import hashlib
+            import time
+            file_id = hashlib.md5(f"{user_id}_{file_name}_{time.time()}".encode()).hexdigest()
+
+            # Extract relevant data
+            summary = extracted_data.get('summary', '')
+            extracted_text = extracted_data.get('extracted_text', '')
+            keywords = []
+
+            # Try to extract keywords from summary if available
+            if isinstance(extracted_data.get('keywords'), list):
+                keywords = extracted_data['keywords']
+
+            async with get_db_session() as session:
+                # Check if document already exists for this user
+                from sqlalchemy import select, and_
+
+                existing_doc_query = select(Document).where(
+                    and_(
+                        Document.original_filename == file_name,
+                        Document.metadata_json['telegram_user_id'].astext == user_id
+                    )
+                )
+
+                result = await session.execute(existing_doc_query)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    # Update existing document
+                    existing.extracted_text = extracted_text
+                    existing.overarching_theme = summary
+                    existing.keywords = keywords
+                    existing.processing_status = "completed"
+                    existing.metadata_json = {
+                        'user_id': user_id,
+                        'document_type': doc_type,
+                        'extracted_data': extracted_data,
+                        'telegram_user_id': user_id
+                    }
+                    print(f"💾 Updated existing document: {file_name}")
+                else:
+                    # Create new document
+                    document = Document(
+                        file_id=file_id,
+                        original_filename=file_name,
+                        file_type=doc_type,
+                        file_size_bytes=len(extracted_text) if extracted_text else 0,
+                        mime_type=f"application/{doc_type}",
+                        extracted_text=extracted_text,
+                        overarching_theme=summary,
+                        keywords=keywords,
+                        processing_status="completed",
+                        metadata_json={
+                            'user_id': user_id,
+                            'document_type': doc_type,
+                            'extracted_data': extracted_data,
+                            'telegram_user_id': user_id
+                        }
+                    )
+                    session.add(document)
+                    print(f"💾 Created new document: {file_name}")
+
+                await session.commit()
+                print(f"✅ Successfully stored document in database: {file_name}")
+
+        except Exception as e:
+            print(f"❌ Error storing document in database: {e}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
 
     async def _download_telegram_file(self, file_id: str) -> bytes:
         """Download file from Telegram API."""
@@ -1470,42 +1559,53 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
             return f"Having trouble with AI right now. Try /help or /status, or just upload some travel pics!"
 
     def _get_user_document_context(self, user_id: str) -> str:
-        """Get context from user's processed documents."""
+        """Get context from user's processed documents from database."""
         try:
-            global processed_documents
-            print(f"📚 Checking processed_documents global variable...")
+            print(f"📚 Retrieving documents from database for user: {user_id}")
 
-            if 'processed_documents' not in globals():
-                print("❌ processed_documents not in globals")
+            # Run async database query
+            import asyncio
+            try:
+                # Try to get existing event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Create a task and wait for completion
+                    # Note: This is a workaround for running async code in sync context
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        future = executor.submit(
+                            lambda: asyncio.run(self._get_user_documents_async(user_id))
+                        )
+                        documents = future.result(timeout=10)  # 10 second timeout
+                else:
+                    # Run directly if no loop is running
+                    documents = loop.run_until_complete(self._get_user_documents_async(user_id))
+            except RuntimeError:
+                # Fallback: create new event loop
+                documents = asyncio.run(self._get_user_documents_async(user_id))
+
+            if not documents:
+                print("❌ No documents found in database")
                 return "No uploaded documents found."
 
-            print(f"📚 processed_documents keys: {list(processed_documents.keys()) if processed_documents else 'None'}")
-
-            if user_id not in processed_documents:
-                print(f"❌ user_id {user_id} not in processed_documents")
-                return "No uploaded documents found."
-
-            user_docs = processed_documents[user_id]
-            print(f"📚 User has {len(user_docs)} documents")
-
-            if not user_docs:
-                print("❌ User docs list is empty")
-                return "No uploaded documents found."
+            print(f"📚 Found {len(documents)} documents in database")
 
             context = "User's uploaded documents:\n"
-            for doc in user_docs[-3:]:  # Last 3 documents
-                summary = doc['extracted_data'].get('summary', 'No summary')
-                extracted_text = doc['extracted_data'].get('extracted_text', '')
+            for doc in documents[-3:]:  # Last 3 documents
+                summary = doc.get('summary', 'No summary')
+                extracted_text = doc.get('extracted_text', '')
+                file_name = doc.get('file_name', 'Unknown file')
+                doc_type = doc.get('document_type', 'document')
 
                 # Include both summary and extracted text for better context
-                context += f"- {doc['file_name']} ({doc['document_type']}): {summary}\n"
+                context += f"- {file_name} ({doc_type}): {summary}\n"
 
                 # Add extracted text content if available (limit to prevent token overflow)
                 if extracted_text:
                     text_snippet = extracted_text[:1000] + "..." if len(extracted_text) > 1000 else extracted_text
                     context += f"  Content: {text_snippet}\n"
 
-                print(f"📄 Added doc to context: {doc['file_name']} - {summary[:50]}...")
+                print(f"📄 Added doc to context: {file_name} - {summary[:50]}...")
 
             print(f"📚 Final context: {context[:200]}...")
             return context
@@ -1515,6 +1615,57 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
             import traceback
             print(f"🚨 Traceback: {traceback.format_exc()}")
             return "Error accessing document context."
+
+    async def _get_user_documents_async(self, user_id: str) -> list:
+        """Async method to retrieve user documents from database."""
+        try:
+            # Import database components
+            import sys
+            import os
+
+            # Add src to path if not already there
+            src_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'src')
+            if src_path not in sys.path:
+                sys.path.append(src_path)
+
+            from core.database import get_db_session
+            from models.document import Document
+            from sqlalchemy import select, and_, desc
+
+            async with get_db_session() as session:
+                # Query documents for this user, ordered by creation date (newest first)
+                query = select(Document).where(
+                    Document.metadata_json['telegram_user_id'].astext == user_id
+                ).order_by(desc(Document.created_at)).limit(5)  # Get last 5 documents
+
+                result = await session.execute(query)
+                documents = result.scalars().all()
+
+                # Convert to dictionary format for easier handling
+                doc_list = []
+                for doc in documents:
+                    # Extract metadata from the JSONB field
+                    metadata = doc.metadata_json or {}
+                    extracted_data = metadata.get('extracted_data', {})
+
+                    doc_dict = {
+                        'file_name': doc.original_filename,
+                        'document_type': metadata.get('document_type', doc.file_type),
+                        'summary': extracted_data.get('summary', doc.overarching_theme or 'No summary'),
+                        'extracted_text': doc.extracted_text or '',
+                        'keywords': doc.keywords or [],
+                        'created_at': doc.created_at.isoformat() if doc.created_at else None
+                    }
+                    doc_list.append(doc_dict)
+
+                print(f"📚 Retrieved {len(doc_list)} documents from database")
+                return doc_list
+
+        except Exception as e:
+            print(f"❌ Error retrieving documents from database: {e}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
+            return []
 
     async def _send_telegram_message(self, chat_id: str, text: str):
         """Send message to Telegram."""
