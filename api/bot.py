@@ -826,7 +826,22 @@ class handler(BaseHTTPRequestHandler):
                         }
                     }
                 elif "photo" in message:
+                    # Photo upload detected - get the largest photo
+                    photos = message["photo"]
+                    largest_photo = max(photos, key=lambda p: p.get("file_size", 0))
                     content = "[Photo]"
+                    return {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "first_name": first_name,
+                        "content": content,
+                        "file_info": {
+                            "file_id": largest_photo.get("file_id"),
+                            "file_name": "photo.jpg",
+                            "file_size": largest_photo.get("file_size", 0)
+                        }
+                    }
                 else:
                     content = "[Other message type]"
 
@@ -869,7 +884,9 @@ class handler(BaseHTTPRequestHandler):
 
             # Handle file uploads
             if "file_info" in message_info:
+                print(f"Processing file upload: {message_info['file_info']}")
                 response_text = await self._handle_file_upload(message_info)
+                print(f"File upload response: {response_text[:100]}...")
 
             # Handle special commands
             elif user_content.lower().startswith('/start'):
