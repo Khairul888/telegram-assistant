@@ -890,7 +890,7 @@ class handler(BaseHTTPRequestHandler):
             else:
                 # Generate AI response for general messages
                 if DEPENDENCIES_AVAILABLE and gemini_service.available:
-                    response_text = await self._generate_ai_response(user_content, first_name)
+                    response_text = await self._generate_ai_response(user_content, first_name, message_info)
                 else:
                     response_text = f"Hey! Running in minimal mode right now. Upload some travel pics or receipts and I'll queue them for processing. Use /help for more info."
 
@@ -923,21 +923,50 @@ class handler(BaseHTTPRequestHandler):
                 if not file_data:
                     return f"❌ Couldn't download {file_name} from Telegram."
 
-                # Quick document classification (sync)
-                doc_type = self._classify_file_simple(file_name)
+                # Store file temporarily for processing
+                temp_file_data = {
+                    'file_name': file_name,
+                    'file_data': file_data,
+                    'user_id': str(user_id),
+                    'file_size': len(file_data)
+                }
 
-                return f"""📸 Got your {file_name}!
+                # Process with Gemini AI (synchronous wrapper)
+                extraction_result = self._process_document_sync(file_data, file_name)
+
+                if extraction_result.get("success"):
+                    doc_type = extraction_result.get("document_type", "document")
+                    extracted_data = extraction_result.get("data", {})
+
+                    # Store results for querying
+                    self._store_processed_document(user_id, file_name, doc_type, extracted_data)
+
+                    return f"""📸 Processed your {file_name}!
+
+🤖 **AI Analysis:**
+• Document type: {doc_type}
+• Processing: ✅ Successful
+• Size: {len(file_data)} bytes
+
+✈️ **Extracted details ready!**
+Try asking me:
+• "When's our flight?"
+• "What travel plans do we have?"
+• "Show me our itinerary details"
+
+Your {doc_type} has been analyzed and stored!"""
+                else:
+                    # Still show basic info even if AI processing fails
+                    doc_type = self._classify_file_simple(file_name)
+                    return f"""📸 Got your {file_name}!
 
 🤖 **File Analysis:**
 • Document type: {doc_type}
 • Upload: ✅ Successful
 • Size: {len(file_data)} bytes
+• AI Processing: ⚠️ {extraction_result.get('error', 'Failed')}
 
-✈️ **Next steps:**
-• Use `/process` to extract travel details
-• Ask me questions about your travel plans
-
-File ready for AI processing!"""
+File stored, try asking general travel questions!"""
 
             except Exception as e:
                 return f"❌ Processing error: {str(e)}"
@@ -996,6 +1025,98 @@ File ready for AI processing!"""
             return 'travel_document'
         else:
             return 'document'
+
+    def _process_document_sync(self, file_data: bytes, file_name: str) -> dict:
+        """Process document with Gemini AI synchronously."""
+        try:
+            global gemini_service
+
+            if not gemini_service or not gemini_service.available:
+                return {"success": False, "error": "AI service not available"}
+
+            # Convert file data to PIL Image
+            from PIL import Image
+            import io
+
+            try:
+                image = Image.open(io.BytesIO(file_data))
+            except Exception as e:
+                return {"success": False, "error": f"Could not open image: {str(e)}"}
+
+            # Simple document classification first
+            doc_type = self._classify_file_simple(file_name)
+
+            # Basic AI processing based on document type
+            if doc_type == "itinerary":
+                prompt = """Analyze this travel itinerary and extract key information:
+- Travel dates
+- Destinations/cities
+- Flight details if visible
+- Hotel information if visible
+- Activities or events
+- Any important times or dates
+
+Return a brief summary of the main travel details."""
+
+            elif doc_type == "flight_ticket":
+                prompt = """Extract flight information:
+- Airline and flight number
+- Departure and arrival cities/airports
+- Date and times
+- Gate and seat if visible
+- Passenger name"""
+
+            elif doc_type == "receipt":
+                prompt = """Extract receipt information:
+- Merchant name and location
+- Date and total amount
+- Main items purchased
+- Category (food/transport/accommodation/shopping)"""
+
+            else:
+                prompt = """Analyze this travel document and extract any relevant travel information like dates, locations, reservations, or expenses."""
+
+            # Generate content with Gemini
+            response = gemini_service.model.generate_content([prompt, image])
+
+            if response.text:
+                return {
+                    "success": True,
+                    "document_type": doc_type,
+                    "data": {"summary": response.text, "details": "Extracted via AI"},
+                    "confidence": 0.85
+                }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Processing error: {str(e)}"}
+
+    def _store_processed_document(self, user_id: str, file_name: str, doc_type: str, extracted_data: dict):
+        """Store processed document results in memory for querying."""
+        try:
+            # For now, store in a simple global variable
+            # In production, this would go to database
+            global processed_documents
+
+            if 'processed_documents' not in globals():
+                processed_documents = {}
+
+            if user_id not in processed_documents:
+                processed_documents[user_id] = []
+
+            document_entry = {
+                'file_name': file_name,
+                'document_type': doc_type,
+                'extracted_data': extracted_data,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            processed_documents[user_id].append(document_entry)
+            print(f"Stored document for user {user_id}: {file_name}")
+
+        except Exception as e:
+            print(f"Error storing document: {e}")
 
     async def _download_telegram_file(self, file_id: str) -> bytes:
         """Download file from Telegram API."""
@@ -1107,19 +1228,19 @@ Upload pics and use /process to extract details."""
         try:
             return f"""🔄 **Processing Status**
 
-⚠️ **Direct file processing temporarily unavailable**
+✅ **Full AI vision processing is now ACTIVE!**
 
 **Current workflow:**
-1. Upload files → Get file analysis
-2. Files stored for future processing
-3. Text chat and queries work normally
+1. Upload files → Immediate AI analysis
+2. Files processed with Gemini 2.5 Flash
+3. Ask questions about your uploaded documents
 
-**Coming soon:**
-• Full AI vision processing restored
-• Travel detail extraction
-• Expense tracking
+**Features active:**
+• ✅ AI vision processing restored
+• ✅ Travel detail extraction
+• ✅ Document analysis and storage
 
-Try asking me travel questions or upload more files!"""
+Upload travel docs and ask me questions like "when's our flight?" or "what did we spend on food?"!"""
 
         except Exception as e:
             return f"⚠️ **Processing Error**\n\nError: {str(e)}"
@@ -1150,9 +1271,13 @@ Try asking me travel questions or upload more files!"""
         except Exception as e:
             return f"⚠️ **Debug Error**\n\nError: {str(e)}"
 
-    async def _generate_ai_response(self, user_message: str, first_name: str) -> str:
+    async def _generate_ai_response(self, user_message: str, first_name: str, message_info: dict) -> str:
         """Generate AI response for general messages."""
         try:
+            # Get user's processed documents for context
+            user_id = str(message_info.get("user_id", ""))
+            document_context = self._get_user_document_context(user_id)
+
             system_instruction = f"""You are a casual travel companion and expense tracking assistant. The user's name is {first_name}.
 
 You help with:
@@ -1160,13 +1285,36 @@ You help with:
 - Tracking group expenses from receipt photos
 - Answering travel-related questions
 
-Be casual and friendly. You're currently in Phase 1 (basic queueing), with full OCR and expense tracking coming in Phase 2."""
+{document_context}
+
+Be casual and friendly. Reference the uploaded documents when relevant to answer questions about flights, hotels, expenses, or travel plans."""
 
             ai_response = await gemini_service.generate_response(user_message, system_instruction)
             return ai_response
 
         except Exception as e:
             return f"Having trouble with AI right now. Try /help or /status, or just upload some travel pics!"
+
+    def _get_user_document_context(self, user_id: str) -> str:
+        """Get context from user's processed documents."""
+        try:
+            global processed_documents
+
+            if 'processed_documents' not in globals() or user_id not in processed_documents:
+                return "No uploaded documents found."
+
+            user_docs = processed_documents[user_id]
+            if not user_docs:
+                return "No uploaded documents found."
+
+            context = "User's uploaded documents:\n"
+            for doc in user_docs[-3:]:  # Last 3 documents
+                context += f"- {doc['file_name']} ({doc['document_type']}): {doc['extracted_data'].get('summary', 'No summary')}\n"
+
+            return context
+
+        except Exception as e:
+            return "Error accessing document context."
 
     async def _send_telegram_message(self, chat_id: str, text: str):
         """Send message to Telegram."""
