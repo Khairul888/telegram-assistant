@@ -1,26 +1,11 @@
-# Essential dependencies for Vercel deployment
-# Keep this minimal to avoid build timeouts and size limits
+# Minimal Vercel deployment - Phase 1
+# Target size: ~20MB to stay well under 250MB limit
 
-# Google Services (Core)
+# Core AI service
 google-generativeai==0.3.2
-google-api-python-client==2.108.0
-google-auth==2.23.4
 
-# HTTP & Async
-aiohttp==3.9.1
-aiofiles==23.2.1
-
-# Configuration & Logging
+# Configuration
 python-dotenv==1.0.0
-loguru==0.7.2
 
-# Basic file processing
-Pillow==10.1.0
-
-# Data processing (lightweight)
-pandas==2.1.3
-openpyxl==3.1.2
-
-# Text processing
-python-docx==1.1.0
-PyPDF2==3.0.1
+# Database & job queue
+supabase==2.3.0

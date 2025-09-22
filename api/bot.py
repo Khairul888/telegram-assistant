@@ -1,3 +1,8 @@
+"""
+Minimal Telegram bot for Vercel deployment.
+Phase 1: Essential functionality only - job orchestration and basic AI chat.
+"""
+
 from http.server import BaseHTTPRequestHandler
 import json
 import os
@@ -6,27 +11,118 @@ import urllib.parse
 import asyncio
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
 try:
-    from src.core.logger import get_logger
-    from src.ai.gemini_service import gemini_service
-    from src.workflows.document_ingestion import document_ingestion_workflow
+    from supabase import create_client, Client
+    import google.generativeai as genai
+    from dotenv import load_dotenv
     DEPENDENCIES_AVAILABLE = True
-    logger = get_logger(__name__)
 except ImportError as e:
     DEPENDENCIES_AVAILABLE = False
-    # Fallback logger
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.error(f"Import error: {e}")
-    gemini_service = None
-    document_ingestion_workflow = None
+    print(f"Import error: {e}")
+
+# Load environment variables
+load_dotenv()
+
+
+class SupabaseJobQueue:
+    """Simple job queue using Supabase."""
+
+    def __init__(self):
+        if DEPENDENCIES_AVAILABLE:
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_KEY')
+
+            if supabase_url and supabase_key:
+                self.supabase: Client = create_client(supabase_url, supabase_key)
+                self.available = True
+            else:
+                self.available = False
+        else:
+            self.available = False
+
+    async def create_job(self, file_name: str, file_id: str, user_id: str) -> dict:
+        """Create a new processing job."""
+        if not self.available:
+            return {"success": False, "error": "Job queue not available"}
+
+        try:
+            job_data = {
+                "file_name": file_name,
+                "file_id": file_id,
+                "user_id": str(user_id),
+                "status": "queued",
+                "created_at": datetime.now().isoformat(),
+            }
+
+            result = self.supabase.table('processing_jobs').insert(job_data).execute()
+
+            return {
+                "success": True,
+                "job_id": result.data[0]['id'] if result.data else None,
+                "message": "Processing job created successfully"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def get_job_status(self, job_id: str) -> dict:
+        """Get status of a processing job."""
+        if not self.available:
+            return {"success": False, "error": "Job queue not available"}
+
+        try:
+            result = self.supabase.table('processing_jobs').select("*").eq('id', job_id).execute()
+
+            if result.data:
+                return {"success": True, "job": result.data[0]}
+            else:
+                return {"success": False, "error": "Job not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+class SimpleGeminiService:
+    """Lightweight Gemini AI service."""
+
+    def __init__(self):
+        if DEPENDENCIES_AVAILABLE:
+            api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+            if api_key:
+                genai.configure(api_key=api_key)
+                self.model = genai.GenerativeModel('gemini-1.5-flash')
+                self.available = True
+            else:
+                self.available = False
+        else:
+            self.available = False
+
+    async def generate_response(self, prompt: str, system_instruction: str = None) -> str:
+        """Generate AI response."""
+        if not self.available:
+            return "AI service temporarily unavailable. Please try again later."
+
+        try:
+            full_prompt = prompt
+            if system_instruction:
+                full_prompt = f"{system_instruction}\n\nUser: {prompt}"
+
+            response = self.model.generate_content(full_prompt)
+            return response.text if response.text else "I'm unable to generate a response right now."
+        except Exception as e:
+            return f"AI service error: {str(e)}"
+
+
+# Initialize services
+job_queue = SupabaseJobQueue()
+gemini_service = SimpleGeminiService()
 
 
 class handler(BaseHTTPRequestHandler):
+    """Minimal Telegram webhook handler."""
 
     def do_POST(self):
         """Handle POST requests from Telegram webhook."""
@@ -73,7 +169,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(error_response).encode('utf-8'))
 
     def do_GET(self):
-        """Handle GET requests for bot info."""
+        """Handle GET requests for status."""
         self.send_response(200)
         self.send_header('Content-type', 'application/json')
         self.end_headers()
@@ -81,7 +177,13 @@ class handler(BaseHTTPRequestHandler):
         response = {
             "status": "ok",
             "message": "Telegram bot webhook is operational",
-            "endpoint": "/api/bot"
+            "phase": "Phase 1 - Minimal Deployment",
+            "features": ["Basic AI chat", "Job queue", "File processing queue"],
+            "dependencies_available": DEPENDENCIES_AVAILABLE,
+            "services": {
+                "gemini": gemini_service.available if 'gemini_service' in globals() else False,
+                "job_queue": job_queue.available if 'job_queue' in globals() else False
+            }
         }
         self.wfile.write(json.dumps(response).encode('utf-8'))
 
@@ -107,7 +209,21 @@ class handler(BaseHTTPRequestHandler):
                 elif "caption" in message:
                     content = message["caption"]
                 elif "document" in message:
-                    content = f"[Document: {message['document'].get('file_name', 'Unknown')}]"
+                    # File upload detected
+                    doc = message["document"]
+                    content = f"[Document: {doc.get('file_name', 'Unknown')}]"
+                    return {
+                        "chat_id": chat_id,
+                        "message_id": message_id,
+                        "user_id": user_id,
+                        "first_name": first_name,
+                        "content": content,
+                        "file_info": {
+                            "file_id": doc.get("file_id"),
+                            "file_name": doc.get("file_name"),
+                            "file_size": doc.get("file_size", 0)
+                        }
+                    }
                 elif "photo" in message:
                     content = "[Photo]"
                 else:
@@ -139,7 +255,7 @@ class handler(BaseHTTPRequestHandler):
             loop.run_until_complete(self._async_process_message(message_info))
 
         except Exception as e:
-            logger.error(f"Error in AI message processing: {e}")
+            print(f"Error in AI message processing: {e}")
             # Fallback to simple response
             self._send_error_response(message_info, str(e))
 
@@ -150,10 +266,12 @@ class handler(BaseHTTPRequestHandler):
             user_content = message_info["content"]
             first_name = message_info.get("first_name", "there")
 
-            logger.info(f"Processing message from {first_name}: {user_content[:100]}")
+            # Handle file uploads
+            if "file_info" in message_info:
+                response_text = await self._handle_file_upload(message_info)
 
             # Handle special commands
-            if user_content.lower().startswith('/start'):
+            elif user_content.lower().startswith('/start'):
                 response_text = await self._handle_start_command(first_name)
 
             elif user_content.lower().startswith('/help'):
@@ -162,186 +280,164 @@ class handler(BaseHTTPRequestHandler):
             elif user_content.lower().startswith('/status'):
                 response_text = await self._handle_status_command(first_name)
 
-            elif user_content.lower().startswith('/process'):
-                response_text = await self._handle_process_command()
-
-            elif user_content.lower().startswith('/search'):
-                search_query = user_content[7:].strip()
-                response_text = await self._handle_search_command(search_query)
-
             else:
                 # Generate AI response for general messages
-                if DEPENDENCIES_AVAILABLE:
+                if DEPENDENCIES_AVAILABLE and gemini_service.available:
                     response_text = await self._generate_ai_response(user_content, first_name)
                 else:
-                    response_text = f"🤖 Hi {first_name}! I'm currently running in limited mode. Some features may not be available. Try using /help for available commands."
+                    response_text = f"🤖 Hi {first_name}! I'm running in minimal mode. Basic chat and file processing are available. Try uploading a document or use /help for commands."
 
             # Send response
             await self._send_telegram_message(chat_id, response_text)
 
         except Exception as e:
-            logger.error(f"Error in async message processing: {e}")
+            print(f"Error in async message processing: {e}")
             await self._send_telegram_message(message_info["chat_id"], f"❌ Processing error: {str(e)}")
+
+    async def _handle_file_upload(self, message_info) -> str:
+        """Handle file upload by creating processing job."""
+        try:
+            file_info = message_info["file_info"]
+            file_name = file_info["file_name"]
+            file_id = file_info["file_id"]
+            user_id = message_info["user_id"]
+            first_name = message_info["first_name"]
+
+            # Create processing job
+            job_result = await job_queue.create_job(file_name, file_id, user_id)
+
+            if job_result["success"]:
+                return f"""📄 **File Received: {file_name}**
+
+✅ **Queued for Processing**
+
+Your document has been added to the processing queue. Our AI will:
+• Extract and analyze content
+• Generate insights and summaries
+• Make it searchable for future queries
+
+🔄 **Status:** Processing will begin shortly
+📧 **Notification:** You'll be notified when complete
+
+*This is Phase 1 - Basic queueing. Full processing coming in Phase 2!*"""
+            else:
+                return f"❌ **Upload Failed**\n\nCouldn't queue {file_name} for processing.\nError: {job_result.get('error', 'Unknown error')}"
+
+        except Exception as e:
+            return f"❌ **Error Processing Upload**\n\nError: {str(e)}"
 
     async def _handle_start_command(self, first_name: str) -> str:
         """Handle /start command."""
         return f"""🤖 **Welcome {first_name}!**
 
-I'm your AI-powered Document Assistant! I can:
+I'm your AI Document Assistant (Phase 1)!
 
-📄 **Process Documents** from Google Drive:
-• Images (OCR text extraction)
-• Excel/CSV files (data analysis)
-• Word documents & PDFs
-• Automatic processing when uploaded
+**Current Features:**
+📄 **File Processing Queue** - Upload docs, I'll queue them for processing
+🧠 **Basic AI Chat** - Ask me anything
+⚡ **Instant Responses** - Fast webhook handling
 
-🧠 **Answer Questions** about your documents
-🔍 **Search** through processed content
-📊 **Analyze** and provide insights
+**Coming Soon (Phase 2):**
+• Full document processing (OCR, analysis)
+• Intelligent search across your documents
+• Advanced AI insights and summaries
 
 **Quick Commands:**
 • `/help` - Show all commands
-• `/status` - Check system health
-• `/process` - Trigger manual processing
-• `/search [query]` - Search documents
+• `/status` - Check system status
+• Just upload a file to get started!
 
-Just ask me anything about your documents! 🚀"""
+Ready to help with your documents! 🚀"""
 
     async def _handle_help_command(self) -> str:
         """Handle /help command."""
-        return """📋 **Available Commands:**
+        return """📋 **Available Commands (Phase 1):**
 
-🏠 `/start` - Welcome message and introduction
-❓ `/help` - Show this help message
-📊 `/status` - Check system health
-🔄 `/process` - Manually trigger document processing
-🔍 `/search [query]` - Search through processed documents
+🏠 `/start` - Welcome message
+❓ `/help` - Show this help
+📊 `/status` - System status
 
-**Document Processing:**
-• Upload files to your configured Google Drive folder
-• I'll automatically process them with AI
-• Ask questions about the content
-• Get summaries and insights
+**File Processing:**
+• Upload any document to queue for processing
+• Supported: PDF, DOCX, images, Excel files
+• You'll get notifications when processing completes
 
-**Examples:**
-• "Summarize the latest report"
-• "What are the key findings in the data?"
-• "Search for information about sales"
-• "/search quarterly revenue"
+**AI Chat:**
+• Ask me general questions
+• Get help with document-related queries
+• Test my conversational abilities
 
-Ready to help with your documents! 📚"""
+**Phase 1 Focus:**
+✅ Reliable file queueing
+✅ Fast bot responses
+✅ Stable foundation
+
+**Coming in Phase 2:**
+🔄 Full document processing
+🔍 Intelligent search
+📊 Advanced analytics
+
+Ready to queue your first document! 📚"""
 
     async def _handle_status_command(self, first_name: str) -> str:
         """Handle /status command."""
         try:
-            # Get health status from workflow
-            health_status = await document_ingestion_workflow.health_check()
+            status_emoji = "✅" if DEPENDENCIES_AVAILABLE else "⚠️"
 
-            status_emoji = "✅" if health_status['status'] == 'healthy' else "⚠️"
+            services_status = []
+            if 'gemini_service' in globals():
+                emoji = "✅" if gemini_service.available else "❌"
+                services_status.append(f"{emoji} Gemini AI")
 
-            components_status = []
-            for component, status in health_status.get('components', {}).items():
-                emoji = "✅" if status == 'healthy' else "❌"
-                components_status.append(f"{emoji} {component.replace('_', ' ').title()}")
+            if 'job_queue' in globals():
+                emoji = "✅" if job_queue.available else "❌"
+                services_status.append(f"{emoji} Job Queue")
 
             return f"""📊 **System Status Report**
 
-{status_emoji} **Overall Status:** {health_status['status'].title()}
+{status_emoji} **Overall Status:** Phase 1 Deployed
 
-**Components:**
-{chr(10).join(components_status)}
+**Services:**
+{chr(10).join(services_status) if services_status else "❌ No services available"}
 
-📈 **Stats:**
-• Processed Files: {health_status.get('processed_files_count', 0)}
-• Monitoring Active: {"Yes" if health_status.get('is_monitoring') else "No"}
+**Current Phase:** 1 - Minimal Deployment
+**Target:** Under 250MB, fast responses
+**Focus:** Job queueing and basic AI
 
-👋 Hello {first_name}! System is ready for document processing!"""
+**Architecture:**
+• Vercel: Bot hosting (this service)
+• Supabase: Job queue and database
+• Railway: Processing (Phase 2)
+
+👋 Hello {first_name}! System ready for file queueing!"""
 
         except Exception as e:
-            logger.error(f"Error getting status: {e}")
             return f"⚠️ **Status Check Failed**\n\nError: {str(e)}"
-
-    async def _handle_process_command(self) -> str:
-        """Handle /process command to manually trigger processing."""
-        try:
-            logger.info("Manual processing triggered via /process command")
-
-            # Trigger processing of new files
-            result = await document_ingestion_workflow.process_new_files(since_minutes=60)
-
-            if result['files_found'] == 0:
-                return "🔍 **No New Files Found**\n\nNo files to process in the last hour. Upload files to your Google Drive folder and try again!"
-
-            success_count = result['files_processed']
-            error_count = result['files_failed']
-
-            if success_count > 0 and error_count == 0:
-                return f"✅ **Processing Complete!**\n\n📄 Successfully processed {success_count} file(s)\n\nYou can now ask questions about these documents!"
-
-            elif success_count > 0 and error_count > 0:
-                return f"⚠️ **Processing Partially Complete**\n\n✅ Processed: {success_count} file(s)\n❌ Failed: {error_count} file(s)\n\nCheck logs for error details."
-
-            else:
-                return f"❌ **Processing Failed**\n\n{error_count} file(s) failed to process. Please check your file formats and try again."
-
-        except Exception as e:
-            logger.error(f"Error in manual processing: {e}")
-            return f"❌ **Processing Error**\n\nError: {str(e)}"
-
-    async def _handle_search_command(self, search_query: str) -> str:
-        """Handle /search command."""
-        if not search_query:
-            return "🔍 **Search Usage:**\n\n`/search [your query]`\n\nExample: `/search quarterly revenue`"
-
-        # Placeholder for document search
-        # In production, this would search through the vector database
-        return f"""🔍 **Search Results for:** "{search_query}"
-
-⚠️ **Search functionality is being prepared**
-
-Your query has been noted. Once document vector storage is fully implemented, I'll be able to search through:
-
-• All processed documents
-• Image text content
-• Spreadsheet data
-• Document summaries
-
-For now, try asking me general questions about documents you've uploaded recently!"""
 
     async def _generate_ai_response(self, user_message: str, first_name: str) -> str:
         """Generate AI response for general messages."""
         try:
-            # Create context-aware prompt
-            system_instruction = f"""You are an AI Document Assistant named Claude. You help users with document processing, analysis, and queries.
+            system_instruction = f"""You are an AI Document Assistant. You help users with document processing and analysis.
 
-The user's name is {first_name}. You have access to:
-- Google Drive document processing
-- OCR for images
-- Excel/CSV analysis
-- Word document and PDF processing
-- AI-powered insights
+The user's name is {first_name}. You are currently in Phase 1 (minimal deployment) with:
+- Basic conversational AI
+- File upload queueing
+- Fast response times
 
-Be helpful, concise, and mention relevant document processing capabilities when appropriate."""
+Be helpful and mention that full document processing will be available in Phase 2."""
 
-            # Generate response using Gemini
-            ai_response = await gemini_service.generate_response(
-                prompt=user_message,
-                system_instruction=system_instruction,
-                temperature=0.7
-            )
-
+            ai_response = await gemini_service.generate_response(user_message, system_instruction)
             return f"🤖 {ai_response}"
 
         except Exception as e:
-            logger.error(f"Error generating AI response: {e}")
-            return f"🤖 Hi {first_name}! I'm having trouble generating a response right now. Try asking about document processing or use one of my commands like `/help` or `/status`!"
+            return f"🤖 Hi {first_name}! I'm having trouble generating a response right now. Try using one of my commands like `/help` or `/status`!"
 
     async def _send_telegram_message(self, chat_id: str, text: str):
-        """Send message to Telegram using async approach."""
+        """Send message to Telegram."""
         try:
             bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
             if not bot_token:
-                logger.error("No bot token found")
+                print("No bot token found")
                 return False
 
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
@@ -351,24 +447,20 @@ Be helpful, concise, and mention relevant document processing capabilities when 
                 "parse_mode": "Markdown"
             }
 
-            # Encode data
             data_encoded = urllib.parse.urlencode(data).encode('utf-8')
-
-            # Create request
             req = urllib.request.Request(url, data=data_encoded, method='POST')
             req.add_header('Content-Type', 'application/x-www-form-urlencoded')
 
-            # Send request
             with urllib.request.urlopen(req) as response:
                 if response.status == 200:
-                    logger.info(f"Message sent successfully to {chat_id}")
+                    print(f"Message sent successfully to {chat_id}")
                     return True
                 else:
-                    logger.error(f"Failed to send message: {response.status}")
+                    print(f"Failed to send message: {response.status}")
                     return False
 
         except Exception as e:
-            logger.error(f"Error sending Telegram message: {e}")
+            print(f"Error sending Telegram message: {e}")
             return False
 
     def _send_error_response(self, message_info, error_message: str):
@@ -397,5 +489,5 @@ Be helpful, concise, and mention relevant document processing capabilities when 
                 return response.status == 200
 
         except Exception as e:
-            logger.error(f"Error sending error response: {e}")
+            print(f"Error sending error response: {e}")
             return False

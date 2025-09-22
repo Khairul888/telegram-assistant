@@ -1,33 +1,78 @@
 """
-Google Drive webhook handler for real-time file processing.
-Receives push notifications from Google Drive when files are added/modified.
+Minimal Google Drive webhook for Vercel deployment.
+Phase 1: Basic webhook receiving and job queue integration.
 """
 
 from http.server import BaseHTTPRequestHandler
 import json
 import os
-import asyncio
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / 'src'))
 
 try:
-    from src.core.logger import get_logger
-    from src.workflows.document_ingestion import document_ingestion_workflow
+    from supabase import create_client, Client
+    from dotenv import load_dotenv
     DEPENDENCIES_AVAILABLE = True
-    logger = get_logger(__name__)
 except ImportError as e:
     DEPENDENCIES_AVAILABLE = False
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.error(f"Import error: {e}")
-    document_ingestion_workflow = None
+    print(f"Import error: {e}")
+
+# Load environment variables
+load_dotenv()
+
+
+class MinimalDriveWebhook:
+    """Minimal Google Drive webhook handler."""
+
+    def __init__(self):
+        if DEPENDENCIES_AVAILABLE:
+            supabase_url = os.getenv('SUPABASE_URL')
+            supabase_key = os.getenv('SUPABASE_KEY')
+
+            if supabase_url and supabase_key:
+                self.supabase: Client = create_client(supabase_url, supabase_key)
+                self.available = True
+            else:
+                self.available = False
+        else:
+            self.available = False
+
+    async def log_webhook_event(self, event_data: dict) -> dict:
+        """Log webhook event for processing in Phase 2."""
+        if not self.available:
+            return {"success": False, "error": "Database not available"}
+
+        try:
+            # Log the webhook event for Phase 2 processing
+            log_data = {
+                "event_type": "drive_webhook",
+                "event_data": event_data,
+                "status": "received",
+                "created_at": datetime.now().isoformat(),
+            }
+
+            # Store in a webhook_logs table for Phase 2 to process
+            result = self.supabase.table('webhook_logs').insert(log_data).execute()
+
+            return {
+                "success": True,
+                "log_id": result.data[0]['id'] if result.data else None,
+                "message": "Webhook event logged successfully"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+
+# Initialize webhook handler
+drive_webhook = MinimalDriveWebhook()
 
 
 class handler(BaseHTTPRequestHandler):
-    """Handler for Google Drive push notifications."""
+    """Minimal Google Drive webhook handler for Vercel."""
 
     def do_POST(self):
         """Handle POST requests from Google Drive push notifications."""
@@ -43,7 +88,7 @@ class handler(BaseHTTPRequestHandler):
             resource_uri = self.headers.get('X-Goog-Resource-URI')
             changed = self.headers.get('X-Goog-Changed')
 
-            logger.info(f"Drive webhook received: state={resource_state}, channel={channel_id}")
+            print(f"Drive webhook received: state={resource_state}, channel={channel_id}")
 
             # Parse request body if present
             notification_data = {}
@@ -51,17 +96,46 @@ class handler(BaseHTTPRequestHandler):
                 try:
                     notification_data = json.loads(post_data.decode('utf-8'))
                 except json.JSONDecodeError:
-                    logger.warning("Could not parse webhook body as JSON")
+                    print("Could not parse webhook body as JSON")
 
-            # Process the notification
-            response_data = self._process_drive_notification(
-                channel_id=channel_id,
-                resource_id=resource_id,
-                resource_state=resource_state,
-                resource_uri=resource_uri,
-                changed=changed,
-                notification_data=notification_data
-            )
+            # Log the webhook event for Phase 2 processing
+            event_data = {
+                "channel_id": channel_id,
+                "resource_id": resource_id,
+                "resource_state": resource_state,
+                "resource_uri": resource_uri,
+                "changed": changed,
+                "notification_data": notification_data,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            # For Phase 1, we just log the event
+            # Phase 2 will add actual processing
+            if DEPENDENCIES_AVAILABLE and drive_webhook.available:
+                # Try to create event loop for async operation
+                try:
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    import asyncio
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+
+                log_result = loop.run_until_complete(drive_webhook.log_webhook_event(event_data))
+                response_data = {
+                    "status": "logged",
+                    "message": "Webhook event logged for Phase 2 processing",
+                    "phase": "Phase 1 - Logging Only",
+                    "log_result": log_result,
+                    "resource_state": resource_state
+                }
+            else:
+                response_data = {
+                    "status": "received",
+                    "message": "Webhook received but logging unavailable",
+                    "phase": "Phase 1 - Minimal Mode",
+                    "resource_state": resource_state
+                }
 
             # Send success response
             self.send_response(200)
@@ -71,7 +145,7 @@ class handler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
 
         except Exception as e:
-            logger.error(f"Error processing Drive webhook: {e}")
+            print(f"Error processing Drive webhook: {e}")
 
             # Still send 200 to prevent retries
             self.send_response(200)
@@ -80,7 +154,8 @@ class handler(BaseHTTPRequestHandler):
 
             error_response = {
                 "status": "error",
-                "message": f"Webhook processing error: {str(e)}"
+                "message": f"Webhook processing error: {str(e)}",
+                "phase": "Phase 1 - Error Handling"
             }
             self.wfile.write(json.dumps(error_response).encode('utf-8'))
 
@@ -92,7 +167,7 @@ class handler(BaseHTTPRequestHandler):
 
             if verification_token:
                 # This is likely a verification request from Google
-                logger.info(f"Drive webhook verification request with token: {verification_token}")
+                print(f"Drive webhook verification request with token: {verification_token}")
 
                 self.send_response(200)
                 self.send_header('Content-type', 'text/plain')
@@ -108,12 +183,18 @@ class handler(BaseHTTPRequestHandler):
             status_response = {
                 "status": "ok",
                 "message": "Google Drive webhook endpoint is operational",
-                "endpoint": "/api/drive-webhook"
+                "phase": "Phase 1 - Minimal Deployment",
+                "features": ["Webhook logging", "Event queuing", "Phase 2 preparation"],
+                "endpoint": "/api/drive-webhook",
+                "dependencies_available": DEPENDENCIES_AVAILABLE,
+                "services": {
+                    "supabase": drive_webhook.available if 'drive_webhook' in globals() else False
+                }
             }
             self.wfile.write(json.dumps(status_response).encode('utf-8'))
 
         except Exception as e:
-            logger.error(f"Error handling Drive webhook GET request: {e}")
+            print(f"Error handling Drive webhook GET request: {e}")
 
             self.send_response(500)
             self.send_header('Content-type', 'application/json')
@@ -121,129 +202,21 @@ class handler(BaseHTTPRequestHandler):
 
             error_response = {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "phase": "Phase 1 - Error State"
             }
             self.wfile.write(json.dumps(error_response).encode('utf-8'))
 
-    def _process_drive_notification(
-        self,
-        channel_id: str,
-        resource_id: str,
-        resource_state: str,
-        resource_uri: str,
-        changed: str,
-        notification_data: dict
-    ) -> dict:
-        """
-        Process Google Drive push notification.
-
-        Args:
-            channel_id: Notification channel ID
-            resource_id: Resource that changed
-            resource_state: Type of change (add, update, remove, sync)
-            resource_uri: URI of the changed resource
-            changed: What changed (usually "changes")
-            notification_data: Additional notification data
-
-        Returns:
-            Response data dictionary
-        """
-        try:
-            logger.info(f"Processing Drive notification: {resource_state} for {resource_id}")
-
-            # Only process certain states
-            if resource_state not in ['add', 'update']:
-                logger.info(f"Ignoring resource state: {resource_state}")
-                return {
-                    "status": "ignored",
-                    "reason": f"Resource state '{resource_state}' not processed",
-                    "resource_state": resource_state
-                }
-
-            # Trigger file processing in background
-            # Note: In a serverless environment, we need to process immediately
-            # rather than scheduling background tasks
-            result = self._trigger_file_processing()
-
-            return {
-                "status": "processed",
-                "resource_state": resource_state,
-                "channel_id": channel_id,
-                "processing_triggered": result,
-                "timestamp": self._get_current_timestamp()
-            }
-
-        except Exception as e:
-            logger.error(f"Error processing Drive notification: {e}")
-            return {
-                "status": "error",
-                "error": str(e),
-                "resource_state": resource_state
-            }
-
-    def _trigger_file_processing(self) -> bool:
-        """
-        Trigger file processing for new/updated files.
-
-        Returns:
-            True if processing was triggered successfully
-        """
-        try:
-            if not DEPENDENCIES_AVAILABLE or document_ingestion_workflow is None:
-                logger.warning("Document processing dependencies not available")
-                return False
-
-            # Since we're in a serverless environment, we need to process synchronously
-            # In a persistent environment, this would be queued for background processing
-
-            # Create event loop if one doesn't exist
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            # Process new files (looking back 10 minutes to catch recent changes)
-            result = loop.run_until_complete(
-                document_ingestion_workflow.process_new_files(since_minutes=10)
-            )
-
-            logger.info(f"File processing triggered: {result['files_processed']} files processed")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error triggering file processing: {e}")
-            return False
-
-    def _get_current_timestamp(self) -> str:
-        """Get current timestamp in ISO format."""
-        from datetime import datetime
-        return datetime.now().isoformat()
-
     def log_message(self, format, *args):
-        """Override to use our logger instead of stderr."""
-        logger.info(f"Drive webhook: {format % args}")
+        """Override to use print instead of stderr."""
+        print(f"Drive webhook: {format % args}")
 
 
-# Note: To set up Google Drive push notifications, you need to:
-# 1. Enable the Google Drive API
-# 2. Create a push notification channel
-# 3. Configure the webhook URL in Google Drive API
+# Phase 1 Note:
+# This webhook currently only logs events for Phase 2 processing.
+# To set up actual Google Drive push notifications, you'll need to:
+# 1. Enable Google Drive API in Google Cloud Console
+# 2. Set up a push notification channel
+# 3. Configure the webhook URL to point to this endpoint
 #
-# Example setup (to be run once):
-# ```python
-# from googleapiclient.discovery import build
-#
-# service = build('drive', 'v3', credentials=credentials)
-#
-# body = {
-#     'id': 'telegram-assistant-drive-channel',
-#     'type': 'web_hook',
-#     'address': 'https://your-vercel-app.vercel.app/api/drive-webhook'
-# }
-#
-# result = service.files().watch(
-#     fileId='your_folder_id',
-#     body=body
-# ).execute()
-# ```
+# This will be implemented in Phase 2 with the Railway processing service.
