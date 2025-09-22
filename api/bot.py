@@ -285,7 +285,7 @@ class handler(BaseHTTPRequestHandler):
                 if DEPENDENCIES_AVAILABLE and gemini_service.available:
                     response_text = await self._generate_ai_response(user_content, first_name)
                 else:
-                    response_text = f"🤖 Hi {first_name}! I'm running in minimal mode. Basic chat and file processing are available. Try uploading a document or use /help for commands."
+                    response_text = f"Hey! Running in minimal mode right now. Upload some travel pics or receipts and I'll queue them for processing. Use /help for more info."
 
             # Send response
             await self._send_telegram_message(chat_id, response_text)
@@ -307,77 +307,52 @@ class handler(BaseHTTPRequestHandler):
             job_result = await job_queue.create_job(file_name, file_id, user_id)
 
             if job_result["success"]:
-                return f"""📄 **File Received: {file_name}**
+                return f"""📸 Got your {file_name}!
 
-✅ **Queued for Processing**
+Queued for processing. When Phase 2 is ready, I'll:
+• Extract text from tickets/receipts
+• Remember travel details
+• Track expenses automatically
 
-Your document has been added to the processing queue. Our AI will:
-• Extract and analyze content
-• Generate insights and summaries
-• Make it searchable for future queries
-
-🔄 **Status:** Processing will begin shortly
-📧 **Notification:** You'll be notified when complete
-
-*This is Phase 1 - Basic queueing. Full processing coming in Phase 2!*"""
+For now, it's safely stored and ready for processing!"""
             else:
-                return f"❌ **Upload Failed**\n\nCouldn't queue {file_name} for processing.\nError: {job_result.get('error', 'Unknown error')}"
+                return f"❌ Couldn't queue {file_name}\nError: {job_result.get('error', 'Unknown error')}"
 
         except Exception as e:
             return f"❌ **Error Processing Upload**\n\nError: {str(e)}"
 
     async def _handle_start_command(self, first_name: str) -> str:
         """Handle /start command."""
-        return f"""🤖 **Welcome {first_name}!**
+        return f"""✈️ Hey {first_name}!
 
-I'm your AI Document Assistant (Phase 1)!
+I'm your travel buddy and expense tracker. Upload photos of:
+• Flight tickets, hotel bookings, itineraries → I'll remember details for you
+• Receipts → I'll break them down and track group expenses
 
-**Current Features:**
-📄 **File Processing Queue** - Upload docs, I'll queue them for processing
-🧠 **Basic AI Chat** - Ask me anything
-⚡ **Instant Responses** - Fast webhook handling
+Just send me pics and ask stuff like "when's our flight?" or "what did we spend on food?"
 
-**Coming Soon (Phase 2):**
-• Full document processing (OCR, analysis)
-• Intelligent search across your documents
-• Advanced AI insights and summaries
-
-**Quick Commands:**
-• `/help` - Show all commands
-• `/status` - Check system status
-• Just upload a file to get started!
-
-Ready to help with your documents! 🚀"""
+Phase 1: Basic setup and image queueing
+Phase 2: Full OCR and expense tracking coming soon!"""
 
     async def _handle_help_command(self) -> str:
         """Handle /help command."""
-        return """📋 **Available Commands (Phase 1):**
+        return """📋 Commands:
 
-🏠 `/start` - Welcome message
-❓ `/help` - Show this help
+🏠 `/start` - What I do
+❓ `/help` - This help
 📊 `/status` - System status
 
-**File Processing:**
-• Upload any document to queue for processing
-• Supported: PDF, DOCX, images, Excel files
-• You'll get notifications when processing completes
+**Upload pics of:**
+✈️ Tickets, bookings, itineraries
+🧾 Receipts, bills
 
-**AI Chat:**
-• Ask me general questions
-• Get help with document-related queries
-• Test my conversational abilities
+**Ask me stuff like:**
+• "When's our flight?"
+• "What did we spend on food?"
+• "Show me hotel details"
 
-**Phase 1 Focus:**
-✅ Reliable file queueing
-✅ Fast bot responses
-✅ Stable foundation
-
-**Coming in Phase 2:**
-🔄 Full document processing
-🔍 Intelligent search
-📊 Advanced analytics
-
-Ready to queue your first document! 📚"""
+Phase 1: Just queueing your pics
+Phase 2: Full OCR and expense tracking"""
 
     async def _handle_status_command(self, first_name: str) -> str:
         """Handle /status command."""
@@ -417,20 +392,20 @@ Ready to queue your first document! 📚"""
     async def _generate_ai_response(self, user_message: str, first_name: str) -> str:
         """Generate AI response for general messages."""
         try:
-            system_instruction = f"""You are an AI Document Assistant. You help users with document processing and analysis.
+            system_instruction = f"""You are a casual travel companion and expense tracking assistant. The user's name is {first_name}.
 
-The user's name is {first_name}. You are currently in Phase 1 (minimal deployment) with:
-- Basic conversational AI
-- File upload queueing
-- Fast response times
+You help with:
+- Remembering travel details from uploaded photos (tickets, itineraries, bookings)
+- Tracking group expenses from receipt photos
+- Answering travel-related questions
 
-Be helpful and mention that full document processing will be available in Phase 2."""
+Be casual and friendly. You're currently in Phase 1 (basic queueing), with full OCR and expense tracking coming in Phase 2."""
 
             ai_response = await gemini_service.generate_response(user_message, system_instruction)
-            return f"🤖 {ai_response}"
+            return ai_response
 
         except Exception as e:
-            return f"🤖 Hi {first_name}! I'm having trouble generating a response right now. Try using one of my commands like `/help` or `/status`!"
+            return f"Having trouble with AI right now. Try /help or /status, or just upload some travel pics!"
 
     async def _send_telegram_message(self, chat_id: str, text: str):
         """Send message to Telegram."""

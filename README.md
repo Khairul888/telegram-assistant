@@ -1,16 +1,16 @@
-# 🤖 Telegram Assistant - AI-Powered Document Analysis Bot
+# ✈️ Travel Buddy - AI Travel Companion & Expense Tracker
 
-A custom FastAPI application that replicates n8n workflow functionality for **$0/month** hosting costs. This intelligent Telegram bot specializes in analyzing and querying Nostr user profiles with advanced AI processing capabilities.
+A Telegram bot that acts as your personal travel assistant and group expense tracker. Upload photos of tickets, receipts, and itineraries - I'll remember everything and help track your spending.
 
 ## ✨ Features
 
-- 🤖 **Telegram Bot Interface** - Natural conversation with AI assistant
-- 📄 **Multi-format File Processing** - PDF, DOCX, images, Excel files
-- 🧠 **AI-Powered Analysis** - Google Gemini for content extraction and insights
-- 🔍 **Semantic Search** - Vector-based document retrieval using Pinecone/Supabase
-- 💬 **Conversation Memory** - Context-aware responses with 40-message window
-- ⚡ **Serverless Deployment** - Zero-cost hosting on Vercel
-- 📊 **Real-time Processing** - Google Drive integration with webhook triggers
+- ✈️ **Travel Context Memory** - Upload flight tickets, hotel bookings, itineraries
+- 🧾 **Expense Tracking** - Photo receipts → itemized lists and group expense tracking
+- 🤖 **Casual Chat Interface** - Ask "when's our flight?" or "what did we spend on food?"
+- 📸 **Image OCR** - Extract text from photos automatically
+- 💰 **Group Expense Management** - Track who paid what and split costs
+- ⚡ **Instant Responses** - Fast webhook-based processing
+- 📊 **Google Drive Storage** - All photos backed up to your Drive
 
 ## 🏗️ Architecture
 
