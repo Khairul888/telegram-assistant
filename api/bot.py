@@ -902,7 +902,7 @@ class handler(BaseHTTPRequestHandler):
             await self._send_telegram_message(message_info["chat_id"], f"❌ Processing error: {str(e)}")
 
     async def _handle_file_upload(self, message_info) -> str:
-        """Handle file upload by creating processing job."""
+        """Handle file upload by processing directly via Telegram."""
         try:
             file_info = message_info["file_info"]
             file_name = file_info["file_name"]
@@ -910,23 +910,80 @@ class handler(BaseHTTPRequestHandler):
             user_id = message_info["user_id"]
             first_name = message_info["first_name"]
 
-            # Create processing job
-            job_result = await job_queue.create_job(file_name, file_id, user_id)
+            # Process Telegram file directly instead of queueing
+            global gemini_service
 
-            if job_result["success"]:
-                return f"""📸 Got your {file_name}!
+            if not gemini_service or not gemini_service.available:
+                return f"❌ AI processing not available. Try again later."
 
-Queued for processing. When Phase 2 is ready, I'll:
-• Extract text from tickets/receipts
-• Remember travel details
-• Track expenses automatically
+            try:
+                # Download file from Telegram
+                file_data = await self._download_telegram_file(file_id)
 
-For now, it's safely stored and ready for processing!"""
-            else:
-                return f"❌ Couldn't queue {file_name}\nError: {job_result.get('error', 'Unknown error')}"
+                if not file_data:
+                    return f"❌ Couldn't download {file_name} from Telegram."
+
+                # Process with AI directly
+                extraction_result = await gemini_service.process_document(file_data)
+
+                if extraction_result.get("success"):
+                    doc_type = extraction_result.get("document_type", "document")
+
+                    return f"""📸 Processed your {file_name}!
+
+🤖 **AI Analysis:**
+• Document type: {doc_type}
+• Processing: ✅ Successful
+
+✈️ **Next:** Ask me about your travel details!
+• "When's our flight?"
+• "What did we spend on food?"
+• "Show me hotel details"
+
+Your {doc_type} has been analyzed and ready for queries!"""
+                else:
+                    return f"❌ Couldn't analyze {file_name}.\nError: {extraction_result.get('error', 'Unknown error')}"
+
+            except Exception as e:
+                return f"❌ Processing error: {str(e)}"
 
         except Exception as e:
             return f"❌ **Error Processing Upload**\n\nError: {str(e)}"
+
+    async def _download_telegram_file(self, file_id: str) -> bytes:
+        """Download file from Telegram API."""
+        try:
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+            if not bot_token:
+                raise Exception("No bot token available")
+
+            # Get file path from Telegram
+            get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"
+
+            import urllib.request
+            with urllib.request.urlopen(get_file_url) as response:
+                if response.status != 200:
+                    raise Exception(f"Failed to get file info: {response.status}")
+
+                file_info = json.loads(response.read().decode('utf-8'))
+
+                if not file_info.get("ok"):
+                    raise Exception("Telegram API error getting file info")
+
+                file_path = file_info["result"]["file_path"]
+
+            # Download actual file
+            download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+
+            with urllib.request.urlopen(download_url) as response:
+                if response.status != 200:
+                    raise Exception(f"Failed to download file: {response.status}")
+
+                return response.read()
+
+        except Exception as e:
+            print(f"Error downloading Telegram file: {e}")
+            return None
 
     async def _handle_start_command(self, first_name: str) -> str:
         """Handle /start command."""
