@@ -686,6 +686,9 @@ gemini_service = None
 drive_service = None
 job_processor = None
 
+# Global document storage - in-memory for now
+processed_documents = {}
+
 
 class handler(BaseHTTPRequestHandler):
     """Minimal Telegram webhook handler."""
@@ -1406,7 +1409,9 @@ Upload travel docs and ask me questions like "when's our flight?" or "what did w
         try:
             # Get user's processed documents for context
             user_id = str(message_info.get("user_id", ""))
+            print(f"🧠 Getting document context for user: {user_id}")
             document_context = self._get_user_document_context(user_id)
+            print(f"🧠 Document context: {document_context[:200]}...")
 
             system_instruction = f"""You are a casual travel companion and expense tracking assistant. The user's name is {first_name}.
 
@@ -1429,21 +1434,38 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
         """Get context from user's processed documents."""
         try:
             global processed_documents
+            print(f"📚 Checking processed_documents global variable...")
 
-            if 'processed_documents' not in globals() or user_id not in processed_documents:
+            if 'processed_documents' not in globals():
+                print("❌ processed_documents not in globals")
+                return "No uploaded documents found."
+
+            print(f"📚 processed_documents keys: {list(processed_documents.keys()) if processed_documents else 'None'}")
+
+            if user_id not in processed_documents:
+                print(f"❌ user_id {user_id} not in processed_documents")
                 return "No uploaded documents found."
 
             user_docs = processed_documents[user_id]
+            print(f"📚 User has {len(user_docs)} documents")
+
             if not user_docs:
+                print("❌ User docs list is empty")
                 return "No uploaded documents found."
 
             context = "User's uploaded documents:\n"
             for doc in user_docs[-3:]:  # Last 3 documents
-                context += f"- {doc['file_name']} ({doc['document_type']}): {doc['extracted_data'].get('summary', 'No summary')}\n"
+                summary = doc['extracted_data'].get('summary', 'No summary')
+                context += f"- {doc['file_name']} ({doc['document_type']}): {summary}\n"
+                print(f"📄 Added doc to context: {doc['file_name']} - {summary[:50]}...")
 
+            print(f"📚 Final context: {context[:200]}...")
             return context
 
         except Exception as e:
+            print(f"🚨 Error in _get_user_document_context: {str(e)}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
             return "Error accessing document context."
 
     async def _send_telegram_message(self, chat_id: str, text: str):
