@@ -116,9 +116,9 @@ class SimpleGeminiService:
             return f"AI service error: {str(e)}"
 
 
-# Initialize services
-job_queue = SupabaseJobQueue()
-gemini_service = SimpleGeminiService()
+# Initialize services (will be done lazily)
+job_queue = None
+gemini_service = None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -127,6 +127,12 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests from Telegram webhook."""
         try:
+            # Initialize services if not already done
+            global job_queue, gemini_service
+            if job_queue is None:
+                job_queue = SupabaseJobQueue()
+            if gemini_service is None:
+                gemini_service = SimpleGeminiService()
             # Read the request body
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -170,22 +176,36 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         """Handle GET requests for status."""
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.end_headers()
+        try:
+            # Initialize services if not already done
+            global job_queue, gemini_service
+            if job_queue is None:
+                job_queue = SupabaseJobQueue()
+            if gemini_service is None:
+                gemini_service = SimpleGeminiService()
 
-        response = {
-            "status": "ok",
-            "message": "Telegram bot webhook is operational",
-            "phase": "Phase 1 - Minimal Deployment",
-            "features": ["Basic AI chat", "Job queue", "File processing queue"],
-            "dependencies_available": DEPENDENCIES_AVAILABLE,
-            "services": {
-                "gemini": gemini_service.available if 'gemini_service' in globals() else False,
-                "job_queue": job_queue.available if 'job_queue' in globals() else False
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+
+            response = {
+                "status": "ok",
+                "message": "Telegram bot webhook is operational",
+                "phase": "Phase 1 - Minimal Deployment",
+                "features": ["Basic AI chat", "Job queue", "File processing queue"],
+                "dependencies_available": DEPENDENCIES_AVAILABLE,
+                "services": {
+                    "gemini": gemini_service.available if gemini_service else False,
+                    "job_queue": job_queue.available if job_queue else False
+                }
             }
-        }
-        self.wfile.write(json.dumps(response).encode('utf-8'))
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+        except Exception as e:
+            self.send_response(500)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            error_response = {"status": "error", "message": str(e)}
+            self.wfile.write(json.dumps(error_response).encode('utf-8'))
 
     def extract_message_info(self, update):
         """Extract basic message information from update."""
