@@ -6,78 +6,22 @@
       "use": "@vercel/python"
     },
     {
-      "src": "api/telegram-webhook.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/telegram-webhook-simple.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/telegram-webhook-minimal.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/test-simple.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/hello.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/webhook.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/webhook-simple.py",
-      "use": "@vercel/python"
-    },
-    {
-      "src": "api/debug.py",
-      "use": "@vercel/python"
-    },
-    {
       "src": "api/bot.py",
+      "use": "@vercel/python"
+    },
+    {
+      "src": "api/drive-webhook.py",
       "use": "@vercel/python"
     }
   ],
   "routes": [
     {
-      "src": "/api/telegram-webhook",
-      "dest": "/api/telegram-webhook.py"
-    },
-    {
-      "src": "/api/telegram-webhook-simple",
-      "dest": "/api/telegram-webhook-simple.py"
-    },
-    {
-      "src": "/api/telegram-webhook-minimal",
-      "dest": "/api/telegram-webhook-minimal.py"
-    },
-    {
-      "src": "/api/test-simple",
-      "dest": "/api/test-simple.py"
-    },
-    {
-      "src": "/api/hello",
-      "dest": "/api/hello.py"
-    },
-    {
-      "src": "/api/webhook",
-      "dest": "/api/webhook.py"
-    },
-    {
-      "src": "/api/webhook-simple",
-      "dest": "/api/webhook-simple.py"
-    },
-    {
-      "src": "/api/debug",
-      "dest": "/api/debug.py"
-    },
-    {
       "src": "/api/bot",
       "dest": "/api/bot.py"
+    },
+    {
+      "src": "/api/drive-webhook",
+      "dest": "/api/drive-webhook.py"
     },
     {
       "src": "/",
