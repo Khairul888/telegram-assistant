@@ -884,6 +884,9 @@ class handler(BaseHTTPRequestHandler):
             elif user_content.lower().startswith('/process'):
                 response_text = await self._handle_process_command(first_name)
 
+            elif user_content.lower().startswith('/debug'):
+                response_text = await self._handle_debug_command(first_name)
+
             else:
                 # Generate AI response for general messages
                 if DEPENDENCIES_AVAILABLE and gemini_service.available:
@@ -946,6 +949,7 @@ Phase 2: Full OCR and expense tracking coming soon!"""
 ❓ `/help` - This help
 📊 `/status` - System status
 🔄 `/process` - Process pending files
+🔍 `/debug` - Show processing errors
 
 **Upload pics of:**
 ✈️ Tickets, bookings, itineraries
@@ -1026,6 +1030,32 @@ Files have been analyzed and travel details extracted! Try asking me about your 
 
         except Exception as e:
             return f"⚠️ **Processing Error**\n\nError: {str(e)}"
+
+    async def _handle_debug_command(self, first_name: str) -> str:
+        """Handle /debug command to show recent job errors."""
+        try:
+            global job_queue
+
+            if not job_queue or not job_queue.available:
+                return f"❌ Job queue not available for debugging."
+
+            # Get recent failed jobs
+            result = job_queue.supabase.table('processing_jobs').select("*").eq('status', 'failed').order('created_at', desc=True).limit(3).execute()
+
+            if not result.data:
+                return f"✅ No recent failed jobs found!"
+
+            debug_info = f"🔍 **Recent Failed Jobs:**\n\n"
+
+            for job in result.data:
+                debug_info += f"**File:** {job.get('file_name', 'Unknown')}\n"
+                debug_info += f"**Error:** {job.get('error_message', 'No error message')}\n"
+                debug_info += f"**Time:** {job.get('created_at', 'Unknown')}\n\n"
+
+            return debug_info
+
+        except Exception as e:
+            return f"⚠️ **Debug Error**\n\nError: {str(e)}"
 
     async def _generate_ai_response(self, user_message: str, first_name: str) -> str:
         """Generate AI response for general messages."""
