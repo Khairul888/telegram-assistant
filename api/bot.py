@@ -120,6 +120,233 @@ class SimpleGeminiService:
         except Exception as e:
             return f"AI service error: {str(e)}"
 
+    async def classify_document(self, image_data: bytes) -> dict:
+        """Classify document type using vision."""
+        if not self.available:
+            return {"error": "AI service not available"}
+
+        try:
+            # Convert bytes to PIL Image for Gemini
+            from PIL import Image
+            import io
+
+            image = Image.open(io.BytesIO(image_data))
+
+            classification_prompt = """Look at this image and classify it as one of these document types:
+- flight_ticket: Airline boarding passes, flight confirmations, e-tickets
+- receipt: Restaurant bills, shopping receipts, purchase invoices
+- hotel_booking: Hotel confirmations, accommodation bookings
+- itinerary: Travel schedules, trip plans, tour bookings
+- other_document: Any other travel-related document
+
+Return only the classification type, nothing else."""
+
+            response = self.model.generate_content([classification_prompt, image])
+
+            classification = response.text.strip().lower() if response.text else "other_document"
+
+            # Validate classification
+            valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
+            if classification not in valid_types:
+                classification = "other_document"
+
+            return {
+                "success": True,
+                "document_type": classification,
+                "confidence": 0.85  # Placeholder confidence score
+            }
+        except Exception as e:
+            return {"success": False, "error": f"Classification error: {str(e)}"}
+
+    async def extract_flight_details(self, image_data: bytes) -> dict:
+        """Extract flight information from ticket images."""
+        if not self.available:
+            return {"error": "AI service not available"}
+
+        try:
+            from PIL import Image
+            import io
+
+            image = Image.open(io.BytesIO(image_data))
+
+            flight_prompt = """Analyze this flight ticket/boarding pass image and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "airline": "airline name",
+    "flight_number": "flight code",
+    "departure_city": "departure city name",
+    "departure_airport": "departure airport code",
+    "arrival_city": "arrival city name",
+    "arrival_airport": "arrival airport code",
+    "departure_date": "YYYY-MM-DD",
+    "departure_time": "HH:MM",
+    "arrival_date": "YYYY-MM-DD",
+    "arrival_time": "HH:MM",
+    "gate": "gate number",
+    "seat": "seat number",
+    "booking_reference": "confirmation code",
+    "passenger_name": "passenger name",
+    "class": "travel class"
+}"""
+
+            response = self.model.generate_content([flight_prompt, image])
+
+            if response.text:
+                # Try to parse JSON response
+                import json
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Flight extraction error: {str(e)}"}
+
+    async def extract_receipt_details(self, image_data: bytes) -> dict:
+        """Extract expense data from receipt images."""
+        if not self.available:
+            return {"error": "AI service not available"}
+
+        try:
+            from PIL import Image
+            import io
+
+            image = Image.open(io.BytesIO(image_data))
+
+            receipt_prompt = """Analyze this receipt image and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "merchant_name": "business name",
+    "location": "address or city",
+    "date": "YYYY-MM-DD",
+    "time": "HH:MM",
+    "items": [
+        {"name": "item name", "price": 0.00, "quantity": 1}
+    ],
+    "subtotal": 0.00,
+    "tax": 0.00,
+    "tip": 0.00,
+    "total": 0.00,
+    "currency": "USD",
+    "category": "food|transport|accommodation|entertainment|shopping",
+    "payment_method": "cash|card|digital"
+}"""
+
+            response = self.model.generate_content([receipt_prompt, image])
+
+            if response.text:
+                import json
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.85
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Receipt extraction error: {str(e)}"}
+
+    async def extract_hotel_details(self, image_data: bytes) -> dict:
+        """Extract hotel booking information."""
+        if not self.available:
+            return {"error": "AI service not available"}
+
+        try:
+            from PIL import Image
+            import io
+
+            image = Image.open(io.BytesIO(image_data))
+
+            hotel_prompt = """Analyze this hotel booking confirmation and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "hotel_name": "hotel name",
+    "location": "city and address",
+    "check_in_date": "YYYY-MM-DD",
+    "check_in_time": "HH:MM",
+    "check_out_date": "YYYY-MM-DD",
+    "check_out_time": "HH:MM",
+    "nights": 0,
+    "room_type": "room type",
+    "guests": 0,
+    "booking_reference": "confirmation number",
+    "total_cost": 0.00,
+    "currency": "USD",
+    "guest_name": "guest name"
+}"""
+
+            response = self.model.generate_content([hotel_prompt, image])
+
+            if response.text:
+                import json
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Hotel extraction error: {str(e)}"}
+
+    async def process_document(self, image_data: bytes, document_type: str = None) -> dict:
+        """Process document based on type or auto-classify."""
+        try:
+            # Auto-classify if type not provided
+            if not document_type:
+                classification_result = await self.classify_document(image_data)
+                if not classification_result.get("success"):
+                    return classification_result
+                document_type = classification_result["document_type"]
+
+            # Route to appropriate extraction method
+            if document_type == "flight_ticket":
+                return await self.extract_flight_details(image_data)
+            elif document_type == "receipt":
+                return await self.extract_receipt_details(image_data)
+            elif document_type == "hotel_booking":
+                return await self.extract_hotel_details(image_data)
+            else:
+                return {
+                    "success": False,
+                    "error": f"Unsupported document type: {document_type}"
+                }
+
+        except Exception as e:
+            return {"success": False, "error": f"Document processing error: {str(e)}"}
+
 
 class GoogleDriveService:
     """Google Drive API service for file operations."""
@@ -191,10 +418,273 @@ class GoogleDriveService:
             return {"error": f"Error getting file info: {str(e)}"}
 
 
+class JobProcessor:
+    """Process queued files with AI vision extraction."""
+
+    def __init__(self, supabase_client, gemini_service, drive_service):
+        self.supabase = supabase_client
+        self.gemini = gemini_service
+        self.drive = drive_service
+
+    async def get_pending_jobs(self, limit: int = 5) -> list:
+        """Get pending processing jobs from queue."""
+        try:
+            result = self.supabase.table('processing_jobs').select("*").eq('status', 'queued').limit(limit).execute()
+            return result.data if result.data else []
+        except Exception as e:
+            print(f"Error getting pending jobs: {e}")
+            return []
+
+    async def update_job_status(self, job_id: int, status: str, error_message: str = None) -> bool:
+        """Update job status in database."""
+        try:
+            update_data = {
+                "status": status,
+                "started_at": datetime.now().isoformat() if status == "processing" else None,
+                "completed_at": datetime.now().isoformat() if status in ["completed", "failed"] else None
+            }
+            if error_message:
+                update_data["error_message"] = error_message
+
+            self.supabase.table('processing_jobs').update(update_data).eq('id', job_id).execute()
+            return True
+        except Exception as e:
+            print(f"Error updating job status: {e}")
+            return False
+
+    async def process_single_job(self, job_data: dict) -> dict:
+        """Process a single job from the queue."""
+        job_id = job_data.get('id')
+        file_id = job_data.get('file_id')
+        file_name = job_data.get('file_name')
+        user_id = job_data.get('user_id')
+
+        try:
+            # Update job status to processing
+            await self.update_job_status(job_id, "processing")
+
+            # Download file from Google Drive
+            print(f"Processing job {job_id}: {file_name}")
+            file_data = await self.drive.download_file(file_id)
+
+            # Process with Gemini vision
+            extraction_result = await self.gemini.process_document(file_data)
+
+            if extraction_result.get("success"):
+                # Store extracted data
+                storage_result = await self.store_extraction_results(job_id, user_id, extraction_result)
+
+                if storage_result.get("success"):
+                    await self.update_job_status(job_id, "completed")
+                    return {
+                        "success": True,
+                        "job_id": job_id,
+                        "message": f"Successfully processed {file_name}",
+                        "extracted_data": extraction_result.get("data"),
+                        "storage_result": storage_result
+                    }
+                else:
+                    await self.update_job_status(job_id, "failed", f"Storage error: {storage_result.get('error')}")
+                    return {"success": False, "error": f"Failed to store results: {storage_result.get('error')}"}
+            else:
+                await self.update_job_status(job_id, "failed", f"Extraction error: {extraction_result.get('error')}")
+                return {"success": False, "error": f"Extraction failed: {extraction_result.get('error')}"}
+
+        except Exception as e:
+            error_msg = f"Job processing error: {str(e)}"
+            await self.update_job_status(job_id, "failed", error_msg)
+            return {"success": False, "error": error_msg}
+
+    async def store_extraction_results(self, job_id: int, user_id: str, extraction_result: dict) -> dict:
+        """Store extracted data in appropriate tables."""
+        try:
+            extracted_data = extraction_result.get("data", {})
+            document_type = extraction_result.get("document_type", "unknown")
+            confidence = extraction_result.get("confidence", 0.0)
+
+            # Create document processing result record
+            processing_result = {
+                "processing_job_id": job_id,
+                "document_type": document_type,
+                "processing_status": "completed",
+                "extraction_confidence": confidence,
+                "ai_model_used": "gemini-2.5-flash",
+                "structured_data": extracted_data,
+                "completed_at": datetime.now().isoformat()
+            }
+
+            result = self.supabase.table('document_processing_results').insert(processing_result).execute()
+            processing_result_id = result.data[0]['id'] if result.data else None
+
+            # Store in specific table based on document type
+            stored_record_id = None
+            if document_type == "flight_ticket":
+                stored_record_id = await self.store_flight_data(user_id, job_id, extracted_data, confidence)
+            elif document_type == "receipt":
+                stored_record_id = await self.store_expense_data(user_id, job_id, extracted_data, confidence)
+            elif document_type == "hotel_booking":
+                stored_record_id = await self.store_hotel_data(user_id, job_id, extracted_data, confidence)
+
+            # Update processing result with linked record
+            if stored_record_id and processing_result_id:
+                update_data = {}
+                if document_type == "flight_ticket" or document_type == "hotel_booking":
+                    update_data["travel_event_id"] = stored_record_id
+                elif document_type == "receipt":
+                    update_data["expense_id"] = stored_record_id
+
+                if update_data:
+                    self.supabase.table('document_processing_results').update(update_data).eq('id', processing_result_id).execute()
+
+            return {
+                "success": True,
+                "document_type": document_type,
+                "record_id": stored_record_id,
+                "processing_result_id": processing_result_id
+            }
+
+        except Exception as e:
+            return {"success": False, "error": f"Storage error: {str(e)}"}
+
+    async def store_flight_data(self, user_id: str, job_id: int, data: dict, confidence: float) -> int:
+        """Store flight data in travel_events table."""
+        try:
+            # Parse dates and times
+            departure_datetime = None
+            arrival_datetime = None
+
+            if data.get("departure_date") and data.get("departure_time"):
+                departure_datetime = f"{data['departure_date']} {data['departure_time']}:00"
+            if data.get("arrival_date") and data.get("arrival_time"):
+                arrival_datetime = f"{data['arrival_date']} {data['arrival_time']}:00"
+
+            flight_record = {
+                "user_id": user_id,
+                "processing_job_id": job_id,
+                "event_type": "flight",
+                "title": f"{data.get('airline', 'Flight')} {data.get('flight_number', '')}".strip(),
+                "airline": data.get("airline"),
+                "flight_number": data.get("flight_number"),
+                "departure_airport": data.get("departure_airport"),
+                "arrival_airport": data.get("arrival_airport"),
+                "departure_city": data.get("departure_city"),
+                "arrival_city": data.get("arrival_city"),
+                "departure_time": departure_datetime,
+                "arrival_time": arrival_datetime,
+                "start_date": departure_datetime,
+                "end_date": arrival_datetime,
+                "gate": data.get("gate"),
+                "seat": data.get("seat"),
+                "booking_reference": data.get("booking_reference"),
+                "passenger_name": data.get("passenger_name"),
+                "confidence_score": confidence,
+                "raw_extracted_data": data
+            }
+
+            result = self.supabase.table('travel_events').insert(flight_record).execute()
+            return result.data[0]['id'] if result.data else None
+
+        except Exception as e:
+            print(f"Error storing flight data: {e}")
+            return None
+
+    async def store_expense_data(self, user_id: str, job_id: int, data: dict, confidence: float) -> int:
+        """Store expense data in expenses table."""
+        try:
+            expense_record = {
+                "user_id": user_id,
+                "processing_job_id": job_id,
+                "merchant_name": data.get("merchant_name"),
+                "location": data.get("location"),
+                "transaction_date": data.get("date"),
+                "transaction_time": data.get("time"),
+                "category": data.get("category", "other"),
+                "subtotal": float(data.get("subtotal", 0)) if data.get("subtotal") else None,
+                "tax_amount": float(data.get("tax", 0)) if data.get("tax") else None,
+                "tip_amount": float(data.get("tip", 0)) if data.get("tip") else None,
+                "total_amount": float(data.get("total", 0)) if data.get("total") else None,
+                "currency": data.get("currency", "USD"),
+                "items": data.get("items", []),
+                "payment_method": data.get("payment_method"),
+                "confidence_score": confidence,
+                "raw_extracted_data": data
+            }
+
+            result = self.supabase.table('expenses').insert(expense_record).execute()
+            return result.data[0]['id'] if result.data else None
+
+        except Exception as e:
+            print(f"Error storing expense data: {e}")
+            return None
+
+    async def store_hotel_data(self, user_id: str, job_id: int, data: dict, confidence: float) -> int:
+        """Store hotel data in travel_events table."""
+        try:
+            hotel_record = {
+                "user_id": user_id,
+                "processing_job_id": job_id,
+                "event_type": "hotel",
+                "title": data.get("hotel_name", "Hotel Booking"),
+                "hotel_name": data.get("hotel_name"),
+                "location": data.get("location"),
+                "check_in_date": data.get("check_in_date"),
+                "check_out_date": data.get("check_out_date"),
+                "start_date": f"{data.get('check_in_date')} {data.get('check_in_time', '15:00')}:00" if data.get("check_in_date") else None,
+                "end_date": f"{data.get('check_out_date')} {data.get('check_out_time', '11:00')}:00" if data.get("check_out_date") else None,
+                "room_type": data.get("room_type"),
+                "nights": int(data.get("nights", 0)) if data.get("nights") else None,
+                "guests": int(data.get("guests", 1)) if data.get("guests") else None,
+                "booking_reference": data.get("booking_reference"),
+                "guest_name": data.get("guest_name"),
+                "confidence_score": confidence,
+                "raw_extracted_data": data
+            }
+
+            result = self.supabase.table('travel_events').insert(hotel_record).execute()
+            return result.data[0]['id'] if result.data else None
+
+        except Exception as e:
+            print(f"Error storing hotel data: {e}")
+            return None
+
+    async def process_pending_jobs(self, max_jobs: int = 5) -> dict:
+        """Process multiple pending jobs."""
+        try:
+            pending_jobs = await self.get_pending_jobs(max_jobs)
+
+            if not pending_jobs:
+                return {"success": True, "message": "No pending jobs to process", "processed": 0}
+
+            results = []
+            successful = 0
+            failed = 0
+
+            for job in pending_jobs:
+                result = await self.process_single_job(job)
+                results.append(result)
+
+                if result.get("success"):
+                    successful += 1
+                else:
+                    failed += 1
+
+            return {
+                "success": True,
+                "processed": len(pending_jobs),
+                "successful": successful,
+                "failed": failed,
+                "results": results
+            }
+
+        except Exception as e:
+            return {"success": False, "error": f"Batch processing error: {str(e)}"}
+
+
 # Initialize services (will be done lazily)
 job_queue = None
 gemini_service = None
 drive_service = None
+job_processor = None
 
 
 class handler(BaseHTTPRequestHandler):
@@ -204,13 +694,15 @@ class handler(BaseHTTPRequestHandler):
         """Handle POST requests from Telegram webhook."""
         try:
             # Initialize services if not already done
-            global job_queue, gemini_service, drive_service
+            global job_queue, gemini_service, drive_service, job_processor
             if job_queue is None:
                 job_queue = SupabaseJobQueue()
             if gemini_service is None:
                 gemini_service = SimpleGeminiService()
             if drive_service is None:
                 drive_service = GoogleDriveService()
+            if job_processor is None and job_queue.available and gemini_service.available and drive_service.available:
+                job_processor = JobProcessor(job_queue.supabase, gemini_service, drive_service)
             # Read the request body
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -256,13 +748,15 @@ class handler(BaseHTTPRequestHandler):
         """Handle GET requests for status."""
         try:
             # Initialize services if not already done
-            global job_queue, gemini_service, drive_service
+            global job_queue, gemini_service, drive_service, job_processor
             if job_queue is None:
                 job_queue = SupabaseJobQueue()
             if gemini_service is None:
                 gemini_service = SimpleGeminiService()
             if drive_service is None:
                 drive_service = GoogleDriveService()
+            if job_processor is None and job_queue.available and gemini_service.available and drive_service.available:
+                job_processor = JobProcessor(job_queue.supabase, gemini_service, drive_service)
 
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -381,6 +875,9 @@ class handler(BaseHTTPRequestHandler):
             elif user_content.lower().startswith('/status'):
                 response_text = await self._handle_status_command(first_name)
 
+            elif user_content.lower().startswith('/process'):
+                response_text = await self._handle_process_command(first_name)
+
             else:
                 # Generate AI response for general messages
                 if DEPENDENCIES_AVAILABLE and gemini_service.available:
@@ -442,6 +939,7 @@ Phase 2: Full OCR and expense tracking coming soon!"""
 🏠 `/start` - What I do
 ❓ `/help` - This help
 📊 `/status` - System status
+🔄 `/process` - Process pending files
 
 **Upload pics of:**
 ✈️ Tickets, bookings, itineraries
@@ -452,8 +950,8 @@ Phase 2: Full OCR and expense tracking coming soon!"""
 • "What did we spend on food?"
 • "Show me hotel details"
 
-Phase 1: Just queueing your pics
-Phase 2: Full OCR and expense tracking"""
+Phase 2B: AI vision processing active!
+Upload pics and use /process to extract details."""
 
     async def _handle_status_command(self, first_name: str) -> str:
         """Handle /status command."""
@@ -489,6 +987,39 @@ Phase 2: Full OCR and expense tracking"""
 
         except Exception as e:
             return f"⚠️ **Status Check Failed**\n\nError: {str(e)}"
+
+    async def _handle_process_command(self, first_name: str) -> str:
+        """Handle /process command to manually trigger job processing."""
+        try:
+            global job_processor
+
+            if not job_processor:
+                return f"🔄 Processing service not available. Make sure all services are connected."
+
+            # Process pending jobs
+            result = await job_processor.process_pending_jobs(max_jobs=3)
+
+            if result.get("success"):
+                processed = result.get("processed", 0)
+                successful = result.get("successful", 0)
+                failed = result.get("failed", 0)
+
+                if processed == 0:
+                    return f"✅ No pending files to process, {first_name}!"
+                else:
+                    return f"""🔄 **Processing Complete!**
+
+📊 **Results:**
+• Processed: {processed} files
+• ✅ Successful: {successful}
+• ❌ Failed: {failed}
+
+Files have been analyzed and travel details extracted! Try asking me about your trips or expenses."""
+            else:
+                return f"❌ Processing failed: {result.get('error', 'Unknown error')}"
+
+        except Exception as e:
+            return f"⚠️ **Processing Error**\n\nError: {str(e)}"
 
     async def _generate_ai_response(self, user_message: str, first_name: str) -> str:
         """Generate AI response for general messages."""
