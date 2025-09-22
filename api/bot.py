@@ -821,7 +821,7 @@ class handler(BaseHTTPRequestHandler):
                         "content": content,
                         "file_info": {
                             "file_id": doc.get("file_id"),
-                            "file_name": doc.get("file_name"),
+                            "file_name": doc.get("file_name", "document.pdf"),
                             "file_size": doc.get("file_size", 0)
                         }
                     }
@@ -917,32 +917,14 @@ class handler(BaseHTTPRequestHandler):
                 return f"❌ AI processing not available. Try again later."
 
             try:
-                # Download file from Telegram
-                file_data = await self._download_telegram_file(file_id)
+                # For now, just acknowledge the file upload without processing
+                # TODO: Fix async processing in next iteration
+                return f"""📸 Got your {file_name}!
 
-                if not file_data:
-                    return f"❌ Couldn't download {file_name} from Telegram."
+⚠️ **Processing temporarily disabled** - fixing async issues
 
-                # Process with AI directly
-                extraction_result = await gemini_service.process_document(file_data)
-
-                if extraction_result.get("success"):
-                    doc_type = extraction_result.get("document_type", "document")
-
-                    return f"""📸 Processed your {file_name}!
-
-🤖 **AI Analysis:**
-• Document type: {doc_type}
-• Processing: ✅ Successful
-
-✈️ **Next:** Ask me about your travel details!
-• "When's our flight?"
-• "What did we spend on food?"
-• "Show me hotel details"
-
-Your {doc_type} has been analyzed and ready for queries!"""
-                else:
-                    return f"❌ Couldn't analyze {file_name}.\nError: {extraction_result.get('error', 'Unknown error')}"
+Upload working, AI processing will be restored soon.
+Try text queries in the meantime!"""
 
             except Exception as e:
                 return f"❌ Processing error: {str(e)}"
