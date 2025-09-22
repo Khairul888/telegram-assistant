@@ -693,35 +693,56 @@ class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         """Handle POST requests from Telegram webhook."""
         try:
+            print("🚀 POST request received - starting processing")
+
             # Initialize services if not already done
             global job_queue, gemini_service, drive_service, job_processor
             if job_queue is None:
+                print("📋 Initializing job_queue...")
                 job_queue = SupabaseJobQueue()
+                print(f"📋 Job queue available: {job_queue.available}")
             if gemini_service is None:
+                print("🤖 Initializing gemini_service...")
                 gemini_service = SimpleGeminiService()
+                print(f"🤖 Gemini service available: {gemini_service.available}")
             if drive_service is None:
+                print("💾 Initializing drive_service...")
                 drive_service = GoogleDriveService()
+                print(f"💾 Drive service available: {drive_service.available}")
             if job_processor is None and job_queue.available and gemini_service.available and drive_service.available:
                 job_processor = JobProcessor(job_queue.supabase, gemini_service, drive_service)
+                print("⚙️ Job processor initialized")
+
             # Read the request body
             content_length = int(self.headers.get('Content-Length', 0))
+            print(f"📥 Content length: {content_length}")
             post_data = self.rfile.read(content_length)
+            print("📥 Request body read successfully")
 
             # Parse JSON
             try:
                 update = json.loads(post_data.decode('utf-8'))
-            except json.JSONDecodeError:
+                print("✅ JSON parsed successfully")
+                print(f"📨 Update keys: {list(update.keys())}")
+            except json.JSONDecodeError as e:
+                print(f"❌ JSON decode error: {e}")
                 self.send_error(400, "Invalid JSON")
                 return
 
             # Extract message info
+            print("🔍 Extracting message info...")
             message_info = self.extract_message_info(update)
+            print(f"📋 Message info: {message_info}")
 
             if message_info:
+                print("✅ Message info extracted, processing with AI...")
                 # Process message with AI and send response
                 self.process_message_with_ai(message_info)
+            else:
+                print("⚠️ No message info extracted")
 
             # Send success response to Telegram
+            print("📤 Sending 200 OK to Telegram...")
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
@@ -731,8 +752,14 @@ class handler(BaseHTTPRequestHandler):
                 "message": "Update processed successfully"
             }
             self.wfile.write(json.dumps(response).encode('utf-8'))
+            print("✅ Response sent to Telegram")
 
         except Exception as e:
+            print(f"🚨 CRITICAL ERROR in do_POST: {str(e)}")
+            print(f"🚨 Error type: {type(e).__name__}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
+
             # Still send 200 to Telegram to avoid retries
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
@@ -860,36 +887,50 @@ class handler(BaseHTTPRequestHandler):
     def process_message_with_ai(self, message_info):
         """Process message with AI and send intelligent response."""
         try:
+            print("🤖 Starting AI message processing...")
             # Create event loop if one doesn't exist
             try:
                 loop = asyncio.get_event_loop()
+                print("✅ Got existing event loop")
             except RuntimeError:
+                print("🔄 Creating new event loop...")
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
+                print("✅ New event loop created")
 
             # Process message asynchronously
+            print("🔄 Running async message processing...")
             loop.run_until_complete(self._async_process_message(message_info))
+            print("✅ Async message processing completed")
 
         except Exception as e:
-            print(f"Error in AI message processing: {e}")
+            print(f"🚨 ERROR in AI message processing: {e}")
+            print(f"🚨 Error type: {type(e).__name__}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
             # Fallback to simple response
+            print("🔄 Sending error response to user...")
             self._send_error_response(message_info, str(e))
 
     async def _async_process_message(self, message_info):
         """Async method to process message with AI."""
         try:
+            print("📝 Extracting message details...")
             chat_id = message_info["chat_id"]
             user_content = message_info["content"]
             first_name = message_info.get("first_name", "there")
+            print(f"👤 User: {first_name}, Chat: {chat_id}, Content: {user_content}")
 
             # Handle file uploads
             if "file_info" in message_info:
-                print(f"Processing file upload: {message_info['file_info']}")
+                print(f"📎 FILE UPLOAD DETECTED: {message_info['file_info']}")
+                print("🔄 Starting file upload handler...")
                 response_text = await self._handle_file_upload(message_info)
-                print(f"File upload response: {response_text[:100]}...")
+                print(f"📎 File upload response (first 100 chars): {response_text[:100]}...")
 
             # Handle special commands
             elif user_content.lower().startswith('/start'):
+                print("🏠 Handling /start command...")
                 response_text = await self._handle_start_command(first_name)
 
             elif user_content.lower().startswith('/help'):
@@ -912,33 +953,49 @@ class handler(BaseHTTPRequestHandler):
                     response_text = f"Hey! Running in minimal mode right now. Upload some travel pics or receipts and I'll queue them for processing. Use /help for more info."
 
             # Send response
+            print("📤 Sending response to Telegram...")
             await self._send_telegram_message(chat_id, response_text)
+            print("✅ Response sent successfully")
 
         except Exception as e:
-            print(f"Error in async message processing: {e}")
+            print(f"🚨 ERROR in async message processing: {e}")
+            print(f"🚨 Error type: {type(e).__name__}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
+
+            print("🔄 Sending error message to user...")
             await self._send_telegram_message(message_info["chat_id"], f"❌ Processing error: {str(e)}")
 
     async def _handle_file_upload(self, message_info) -> str:
         """Handle file upload by processing directly via Telegram."""
         try:
+            print("📎 Starting file upload processing...")
             file_info = message_info["file_info"]
             file_name = file_info["file_name"]
             file_id = file_info["file_id"]
             user_id = message_info["user_id"]
             first_name = message_info["first_name"]
+            print(f"📁 File details - Name: {file_name}, ID: {file_id}, User: {user_id}")
 
             # Process Telegram file directly instead of queueing
             global gemini_service
+            print(f"🤖 Checking Gemini service availability...")
 
             if not gemini_service or not gemini_service.available:
+                print("❌ Gemini service not available")
                 return f"❌ AI processing not available. Try again later."
 
+            print("✅ Gemini service available, starting file download...")
             try:
                 # Download file from Telegram synchronously
+                print(f"📥 Downloading file from Telegram with ID: {file_id}")
                 file_data = self._download_telegram_file_sync(file_id)
 
                 if not file_data:
+                    print("❌ File download failed - no data returned")
                     return f"❌ Couldn't download {file_name} from Telegram."
+
+                print(f"✅ File downloaded successfully - Size: {len(file_data)} bytes")
 
                 # Store file temporarily for processing
                 temp_file_data = {
@@ -949,14 +1006,20 @@ class handler(BaseHTTPRequestHandler):
                 }
 
                 # Process with Gemini AI (synchronous wrapper)
+                print("🤖 Starting AI vision processing...")
                 extraction_result = self._process_document_sync(file_data, file_name)
+                print(f"🤖 AI processing result: {extraction_result}")
 
                 if extraction_result.get("success"):
+                    print("✅ AI processing successful!")
                     doc_type = extraction_result.get("document_type", "document")
                     extracted_data = extraction_result.get("data", {})
+                    print(f"📊 Extracted data: {doc_type} - {extracted_data}")
 
                     # Store results for querying
+                    print("💾 Storing processed document...")
                     self._store_processed_document(user_id, file_name, doc_type, extracted_data)
+                    print("✅ Document stored successfully")
 
                     return f"""📸 Processed your {file_name}!
 
@@ -973,6 +1036,7 @@ Try asking me:
 
 Your {doc_type} has been analyzed and stored!"""
                 else:
+                    print(f"❌ AI processing failed: {extraction_result.get('error', 'Unknown error')}")
                     # Still show basic info even if AI processing fails
                     doc_type = self._classify_file_simple(file_name)
                     return f"""📸 Got your {file_name}!
@@ -986,44 +1050,68 @@ Your {doc_type} has been analyzed and stored!"""
 File stored, try asking general travel questions!"""
 
             except Exception as e:
+                print(f"🚨 ERROR in file processing: {str(e)}")
+                print(f"🚨 Error type: {type(e).__name__}")
+                import traceback
+                print(f"🚨 Traceback: {traceback.format_exc()}")
                 return f"❌ Processing error: {str(e)}"
 
         except Exception as e:
+            print(f"🚨 ERROR in file upload handler: {str(e)}")
+            print(f"🚨 Error type: {type(e).__name__}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
             return f"❌ **Error Processing Upload**\n\nError: {str(e)}"
 
     def _download_telegram_file_sync(self, file_id: str) -> bytes:
         """Download file from Telegram API synchronously."""
         try:
+            print(f"📞 Getting bot token...")
             bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
             if not bot_token:
+                print("❌ No bot token found in environment")
                 raise Exception("No bot token available")
+            print("✅ Bot token found")
 
             # Get file path from Telegram
             get_file_url = f"https://api.telegram.org/bot{bot_token}/getFile?file_id={file_id}"
+            print(f"🌐 Getting file info from: {get_file_url}")
 
             import urllib.request
             with urllib.request.urlopen(get_file_url) as response:
+                print(f"📞 File info response status: {response.status}")
                 if response.status != 200:
                     raise Exception(f"Failed to get file info: {response.status}")
 
-                file_info = json.loads(response.read().decode('utf-8'))
+                response_data = response.read().decode('utf-8')
+                print(f"📞 File info response: {response_data[:200]}...")
+                file_info = json.loads(response_data)
 
                 if not file_info.get("ok"):
+                    print(f"❌ Telegram API error: {file_info}")
                     raise Exception("Telegram API error getting file info")
 
                 file_path = file_info["result"]["file_path"]
+                print(f"📂 File path received: {file_path}")
 
             # Download actual file
             download_url = f"https://api.telegram.org/file/bot{bot_token}/{file_path}"
+            print(f"📥 Downloading file from: {download_url}")
 
             with urllib.request.urlopen(download_url) as response:
+                print(f"📥 Download response status: {response.status}")
                 if response.status != 200:
                     raise Exception(f"Failed to download file: {response.status}")
 
-                return response.read()
+                file_data = response.read()
+                print(f"✅ File downloaded successfully - {len(file_data)} bytes")
+                return file_data
 
         except Exception as e:
-            print(f"Error downloading Telegram file: {e}")
+            print(f"🚨 ERROR downloading Telegram file: {e}")
+            print(f"🚨 Error type: {type(e).__name__}")
+            import traceback
+            print(f"🚨 Traceback: {traceback.format_exc()}")
             return None
 
     def _classify_file_simple(self, file_name: str) -> str:
@@ -1336,23 +1424,31 @@ Be casual and friendly. Reference the uploaded documents when relevant to answer
     async def _send_telegram_message(self, chat_id: str, text: str):
         """Send message to Telegram."""
         try:
+            print(f"📤 Preparing to send message to chat {chat_id}")
+            print(f"📤 Message length: {len(text)} characters")
+
             bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
             if not bot_token:
-                print("No bot token found")
+                print("❌ No bot token found for sending message")
                 return False
 
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            print(f"🌐 Sending to: {url}")
+
             data = {
                 "chat_id": chat_id,
                 "text": text,
                 "parse_mode": "Markdown"
             }
 
+            print("📤 Encoding message data...")
             data_encoded = urllib.parse.urlencode(data).encode('utf-8')
             req = urllib.request.Request(url, data=data_encoded, method='POST')
             req.add_header('Content-Type', 'application/x-www-form-urlencoded')
 
+            print("📞 Making API call to Telegram...")
             with urllib.request.urlopen(req) as response:
+                print(f"📞 Response status: {response.status}")
                 if response.status == 200:
                     print(f"Message sent successfully to {chat_id}")
                     return True
