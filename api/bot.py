@@ -792,6 +792,12 @@ class handler(BaseHTTPRequestHandler):
                 chat_id = message["chat"]["id"]
                 message_id = message["message_id"]
 
+                # Security: Only allow your chat ID
+                ALLOWED_CHAT_IDS = [1316304260]  # Your chat ID
+                if chat_id not in ALLOWED_CHAT_IDS:
+                    print(f"Unauthorized access attempt from chat_id: {chat_id}")
+                    return None
+
                 # Extract user info
                 user = message.get("from", {})
                 user_id = user.get("id")
