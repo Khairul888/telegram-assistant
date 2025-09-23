@@ -1121,10 +1121,14 @@ class handler(BaseHTTPRequestHandler):
             if not gemini_service or not gemini_service.available:
                 return {"success": False, "error": "AI service not available"}
 
-            # Handle PDF files differently from images
+            # Handle different file types
             if file_name.lower().endswith('.pdf'):
                 print("📄 PDF detected - processing as PDF document")
                 return self._process_pdf_document(file_data, file_name)
+
+            elif file_name.lower().endswith(('.xlsx', '.xls', '.csv')):
+                print("📊 Excel/CSV detected - processing as spreadsheet")
+                return self._process_excel_document(file_data, file_name)
 
             # Convert image file data to PIL Image
             from PIL import Image
@@ -1263,6 +1267,84 @@ Text content:
         except Exception as e:
             print(f"❌ PDF processing error: {str(e)}")
             return {"success": False, "error": f"PDF processing error: {str(e)}"}
+
+    def _process_excel_document(self, file_data: bytes, file_name: str) -> dict:
+        """Process Excel/CSV document by extracting data and using AI for analysis."""
+        try:
+            print("📊 Processing Excel/CSV document...")
+
+            # Save to temporary file for pandas processing
+            import tempfile
+            import os
+            import pandas as pd
+            from io import BytesIO
+
+            # Determine file type
+            file_extension = file_name.lower().split('.')[-1]
+
+            try:
+                if file_extension in ['xlsx', 'xls']:
+                    # Read Excel file
+                    df = pd.read_excel(BytesIO(file_data), sheet_name=None)  # Read all sheets
+
+                    # If multiple sheets, combine them
+                    if isinstance(df, dict):
+                        sheets_data = []
+                        sheet_names = list(df.keys())
+                        for sheet_name, sheet_df in df.items():
+                            sheets_data.append(f"Sheet: {sheet_name}\n{sheet_df.to_string()}")
+                        extracted_text = "\n\n".join(sheets_data)
+                        print(f"✅ Extracted data from {len(sheet_names)} Excel sheets")
+                    else:
+                        extracted_text = df.to_string()
+                        print(f"✅ Extracted Excel data: {df.shape[0]} rows, {df.shape[1]} columns")
+
+                elif file_extension == 'csv':
+                    # Read CSV file
+                    df = pd.read_csv(BytesIO(file_data))
+                    extracted_text = df.to_string()
+                    print(f"✅ Extracted CSV data: {df.shape[0]} rows, {df.shape[1]} columns")
+                else:
+                    return {"success": False, "error": f"Unsupported spreadsheet format: {file_extension}"}
+
+            except Exception as e:
+                print(f"❌ Error reading spreadsheet: {str(e)}")
+                return {"success": False, "error": f"Could not read spreadsheet: {str(e)}"}
+
+            # Classify document type
+            doc_type = self._classify_file_simple(file_name)
+
+            # Use AI to analyze the spreadsheet data
+            analysis_prompt = f"""Analyze this spreadsheet data from a {doc_type} file and provide:
+1. A summary of what this spreadsheet contains
+2. Key information and patterns you can identify
+3. Important data points, dates, or values
+4. Structure and organization of the data
+
+Spreadsheet data (first 2000 characters):
+{extracted_text[:2000]}"""
+
+            # Generate AI analysis
+            global gemini_service
+            analysis_response = gemini_service.model.generate_content(analysis_prompt)
+            analysis_text = analysis_response.text if analysis_response.text else "Spreadsheet processed successfully"
+
+            return {
+                "success": True,
+                "document_type": doc_type,
+                "data": {
+                    "summary": analysis_text,
+                    "extracted_data": extracted_text[:1000],  # Store first 1000 chars
+                    "details": f"Spreadsheet document processed: {file_name}",
+                    "file_type": file_extension,
+                    "data_length": len(extracted_text)
+                },
+                "confidence": 0.85
+            }
+
+        except Exception as e:
+            print(f"❌ Excel processing error: {str(e)}")
+            return {"success": False, "error": f"Excel processing error: {str(e)}"}
 
     def _store_processed_document(self, user_id: str, file_name: str, doc_type: str, extracted_data: dict):
         """Store processed document results in memory for querying."""
