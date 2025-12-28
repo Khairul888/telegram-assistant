@@ -803,18 +803,12 @@ Enter {next_participant}'s share:"""
                 paid_by,
                 split_type,
                 participants_selected,
-                amount
+                amount,
+                split_amounts  # Pass the calculated split amounts
             )
 
             if not update_result.get("success"):
                 return f"Error updating split: {update_result.get('error')}"
-
-            # Manually set split_amounts since update_expense_split doesn't handle custom yet
-            from api.utils.db_utils import get_supabase_client
-            supabase = get_supabase_client()
-            supabase.table('expenses').update({
-                'split_amounts': split_amounts
-            }).eq('id', expense_id).execute()
 
             # Calculate settlements
             immediate = self.settlement_service.calculate_immediate_settlement(

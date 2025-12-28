@@ -114,36 +114,37 @@ class ExpenseService:
 
     async def update_expense_split(self, expense_id: int, paid_by: str,
                                   split_type: str, participants: List[str],
-                                  total_amount: float) -> Dict:
+                                  total_amount: float, split_amounts: dict = None) -> Dict:
         """
         Update expense with split information after user selection.
 
         Args:
             expense_id: Expense ID to update
             paid_by: Name of person who paid
-            split_type: 'even' or 'custom'
+            split_type: 'even', 'percent', or 'amount'
             participants: List of participant names
             total_amount: Total expense amount
+            split_amounts: Optional pre-calculated split amounts (for custom splits)
 
         Returns:
             dict: {"success": bool, "expense": dict} or error
         """
         try:
-            if split_type == "even":
-                # Split evenly among all participants
-                per_person = total_amount / len(participants)
-                split_amounts = {
-                    participant: round(per_person, 2)
-                    for participant in participants
-                }
-            elif split_type == "custom":
-                # Custom split (future iteration)
-                return {
-                    "success": False,
-                    "error": "Custom split not yet implemented. Please use 'even' split."
-                }
-            else:
-                return {"success": False, "error": f"Invalid split_type: {split_type}"}
+            # If split_amounts provided, use them (for custom percent/amount splits)
+            if split_amounts is None:
+                if split_type == "even":
+                    # Split evenly among all participants
+                    per_person = total_amount / len(participants)
+                    split_amounts = {
+                        participant: round(per_person, 2)
+                        for participant in participants
+                    }
+                else:
+                    # For percent/amount, split_amounts should be provided
+                    return {
+                        "success": False,
+                        "error": f"split_amounts required for split_type: {split_type}"
+                    }
 
             update_data = {
                 "paid_by": paid_by,
