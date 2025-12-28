@@ -174,8 +174,10 @@ How should this be split among:
                     "flight_number": flight.get("flight_number"),
                     "departure_city": flight.get("departure_city"),
                     "departure_airport": flight.get("departure_airport"),
+                    "departure_terminal": flight.get("departure_terminal"),
                     "arrival_city": flight.get("arrival_city"),
                     "arrival_airport": flight.get("arrival_airport"),
+                    "arrival_terminal": flight.get("arrival_terminal"),
                     "departure_time": f"{flight.get('departure_date')} {flight.get('departure_time')}" if flight.get('departure_date') else None,
                     "arrival_time": f"{flight.get('arrival_date')} {flight.get('arrival_time')}" if flight.get('arrival_date') else None,
                     "gate": flight.get("gate"),
@@ -195,12 +197,23 @@ How should this be split among:
             if len(saved_flights) == 1:
                 # Single flight
                 flight = saved_flights[0]
+
+                # Build flight details with terminal info if available
+                flight_details = []
+                flight_details.append(f"✈️ {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}")
+                flight_details.append(f"📍 {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}")
+
+                if flight.get('departure_terminal') or flight.get('arrival_terminal'):
+                    dep_term = flight.get('departure_terminal', 'N/A')
+                    arr_term = flight.get('arrival_terminal', 'N/A')
+                    flight_details.append(f"🏢 Terminal: {dep_term} → {arr_term}")
+
+                flight_details.append(f"🕐 Departure: {flight.get('departure_date', '')} {flight.get('departure_time', '')}")
+                flight_details.append(f"💺 Seat: {flight.get('seat', 'N/A')}")
+
                 response_msg = f"""✅ Flight saved for {trip['trip_name']}!
 
-✈️ {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}
-📍 {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}
-🕐 Departure: {flight.get('departure_date', '')} {flight.get('departure_time', '')}
-💺 Seat: {flight.get('seat', 'N/A')}
+{chr(10).join(flight_details)}
 
 Ask me "when's my flight?" anytime!"""
             else:
@@ -208,11 +221,22 @@ Ask me "when's my flight?" anytime!"""
                 flight_summaries = []
                 for idx, flight in enumerate(saved_flights, 1):
                     label = "Outbound" if idx == 1 else ("Return" if idx == 2 and len(saved_flights) == 2 else f"Flight {idx}")
-                    flight_summaries.append(
-                        f"{label}: {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}\n"
-                        f"   {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}\n"
-                        f"   {flight.get('departure_date', '')} {flight.get('departure_time', '')}"
-                    )
+
+                    # Build flight summary with terminal info if available
+                    summary_parts = [
+                        f"{label}: {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}",
+                        f"   {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}"
+                    ]
+
+                    # Add terminal info if available
+                    if flight.get('departure_terminal') or flight.get('arrival_terminal'):
+                        dep_term = flight.get('departure_terminal', 'N/A')
+                        arr_term = flight.get('arrival_terminal', 'N/A')
+                        summary_parts.append(f"   Terminal: {dep_term} → {arr_term}")
+
+                    summary_parts.append(f"   {flight.get('departure_date', '')} {flight.get('departure_time', '')}")
+
+                    flight_summaries.append("\n".join(summary_parts))
 
                 response_msg = f"""✅ {len(saved_flights)} flights saved for {trip['trip_name']}!
 
