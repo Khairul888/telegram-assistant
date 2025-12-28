@@ -179,6 +179,11 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_current_trip(user_id)
             elif text.startswith('/balance'):
                 response = await command_handler.handle_balance(user_id)
+            elif text.startswith('/list_expenses'):
+                result = await command_handler.handle_list_expenses(user_id, chat_id)
+                if result.get("response"):
+                    await telegram_utils.send_message(chat_id, result["response"])
+                return
             elif text.startswith('/start'):
                 response = await command_handler.handle_start()
             elif text.startswith('/help'):
@@ -259,6 +264,33 @@ class handler(BaseHTTPRequestHandler):
                     response_dict = await command_handler.handle_split_type_callback(
                         user_id, chat_id, expense_id, split_type
                     )
+            elif callback_data.startswith("delete_expense:"):
+                # Delete expense request
+                expense_id = int(callback_data.split(":")[1])
+                response_dict = await command_handler.handle_delete_expense_callback(
+                    user_id, chat_id, expense_id
+                )
+            elif callback_data.startswith("confirm_delete:"):
+                # Confirm delete expense
+                expense_id = int(callback_data.split(":")[1])
+                response = await command_handler.handle_confirm_delete_callback(
+                    user_id, expense_id
+                )
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("cancel_delete:"):
+                # Cancel delete
+                response = await command_handler.handle_cancel_delete_callback()
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("edit_expense:"):
+                # Edit expense request - not fully implemented yet
+                expense_id = int(callback_data.split(":")[1])
+                response_dict = {"response": "Edit functionality coming soon! For now, you can delete and re-add the expense.", "keyboard": None}
+            elif callback_data.startswith("cancel_edit:"):
+                # Cancel edit
+                response = "Edit cancelled."
+                await telegram_utils.send_message(chat_id, response)
 
             # Send response if provided (for dict responses)
             if response_dict and response_dict.get("response"):

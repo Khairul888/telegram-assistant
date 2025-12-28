@@ -281,6 +281,7 @@ TRIPS:
 EXPENSES:
 • /add_expense <amount> <description> - Add expense manually
   Example: /add_expense 50.00 Dinner at restaurant
+• /list_expenses - View all expenses for current trip
 • Upload receipt photo → I'll extract details & ask how to split
 • /balance - See running balance and settlements
 
@@ -839,3 +840,145 @@ Split breakdown:
 {running}
 
 Use /balance to see running balance anytime."""
+
+    async def handle_list_expenses(self, user_id: str, chat_id: str) -> Dict:
+        """
+        Handle /list_expenses command - show all expenses for current trip.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        trip = await self.trip_service.get_current_trip(user_id)
+        if not trip:
+            return {
+                "response": "No active trip. Create one with /new_trip",
+                "keyboard": None
+            }
+
+        expenses = await self.expense_service.get_trip_expenses(trip['id'])
+
+        if not expenses:
+            return {
+                "response": f"""No expenses found for {trip['trip_name']}.
+
+Add expenses with /add_expense or upload a receipt!""",
+                "keyboard": None
+            }
+
+        # Build expense list with action buttons
+        message = f"Expenses for {trip['trip_name']}:\n\n"
+
+        for idx, expense in enumerate(expenses, 1):
+            amount = expense.get('total_amount', 0)
+            merchant = expense.get('merchant_name', 'Unknown')
+            paid_by = expense.get('paid_by', 'Unknown')
+            date = expense.get('transaction_date', '')[:10] if expense.get('transaction_date') else 'No date'
+            split_between = expense.get('split_between', [])
+            split_count = len(split_between) if isinstance(split_between, list) else 0
+
+            message += f"{idx}. ${amount:.2f} - {merchant}\n"
+            message += f"   Paid by: {paid_by} | Split: {split_count} people | {date}\n\n"
+
+        # Add buttons for each expense
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": f"#{i+1} Edit", "callback_data": f"edit_expense:{exp['id']}"},
+                    {"text": f"#{i+1} Delete", "callback_data": f"delete_expense:{exp['id']}"}
+                ]
+                for i, exp in enumerate(expenses)
+            ]
+        }
+
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_delete_expense_callback(self, user_id: str, chat_id: str, expense_id: int) -> Dict:
+        """
+        Handle delete expense confirmation request.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            expense_id: Expense ID to delete
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        # Get expense details for confirmation
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return {"response": "Expense not found.", "keyboard": None}
+
+        amount = expense.get('total_amount', 0)
+        merchant = expense.get('merchant_name', 'Unknown')
+        paid_by = expense.get('paid_by', 'Unknown')
+
+        # Create confirmation keyboard
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "Yes, delete", "callback_data": f"confirm_delete:{expense_id}"},
+                    {"text": "Cancel", "callback_data": f"cancel_delete:{expense_id}"}
+                ]
+            ]
+        }
+
+        message = f"""Are you sure you want to delete this expense?
+
+${amount:.2f} - {merchant}
+Paid by: {paid_by}
+
+This cannot be undone."""
+
+        # Send confirmation message
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_confirm_delete_callback(self, user_id: str, expense_id: int) -> str:
+        """
+        Handle confirmed expense deletion.
+
+        Args:
+            user_id: Telegram user ID
+            expense_id: Expense ID to delete
+
+        Returns:
+            str: Response message
+        """
+        # Get expense details before deletion
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        amount = expense.get('total_amount', 0)
+        merchant = expense.get('merchant_name', 'Unknown')
+
+        # Delete expense from database
+        try:
+            from api.utils.db_utils import get_supabase_client
+            supabase = get_supabase_client()
+            supabase.table('expenses').delete().eq('id', expense_id).execute()
+
+            return f"""Expense deleted!
+
+${amount:.2f} - {merchant}
+
+Use /list_expenses to see remaining expenses."""
+        except Exception as e:
+            return f"Error deleting expense: {str(e)}"
+
+    async def handle_cancel_delete_callback(self) -> str:
+        """Handle cancelled expense deletion."""
+        return "Deletion cancelled. Expense was not deleted."
