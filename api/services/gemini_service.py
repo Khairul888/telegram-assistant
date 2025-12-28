@@ -29,6 +29,52 @@ class GeminiService:
             self.available = False
             print("Warning: google-generativeai package not available")
 
+    def _extract_json_from_response(self, text: str) -> dict:
+        """
+        Extract JSON from AI response that might be wrapped in markdown or have extra text.
+
+        Args:
+            text: Raw AI response text
+
+        Returns:
+            dict: Parsed JSON data
+
+        Raises:
+            json.JSONDecodeError: If no valid JSON found
+        """
+        if not text:
+            raise json.JSONDecodeError("Empty response", "", 0)
+
+        # Try to parse as-is first
+        try:
+            return json.loads(text.strip())
+        except json.JSONDecodeError:
+            pass
+
+        # Try to extract JSON from markdown code blocks
+        import re
+
+        # Pattern 1: ```json ... ```
+        json_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+        match = re.search(json_pattern, text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Pattern 2: Find first { to last }
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(text[start:end+1])
+            except json.JSONDecodeError:
+                pass
+
+        # If all else fails, raise error with the original text
+        raise json.JSONDecodeError(f"Could not extract JSON from response: {text[:200]}...", text, 0)
+
     def _validate_and_open_image(self, image_data: bytes):
         """
         Validate and open image data with PIL.
@@ -414,17 +460,19 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
             if response.text:
                 try:
-                    extracted_data = json.loads(response.text.strip())
+                    print(f"Raw flight response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
                     return {
                         "success": True,
                         "data": extracted_data,
                         "confidence": 0.8
                     }
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
                     return {
                         "success": False,
                         "error": "Could not parse AI response as JSON",
-                        "raw_response": response.text
+                        "raw_response": response.text[:500]
                     }
             else:
                 return {"success": False, "error": "No response from AI"}
@@ -459,17 +507,19 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
             if response.text:
                 try:
-                    extracted_data = json.loads(response.text.strip())
+                    print(f"Raw receipt response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
                     return {
                         "success": True,
                         "data": extracted_data,
                         "confidence": 0.85
                     }
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
                     return {
                         "success": False,
                         "error": "Could not parse AI response as JSON",
-                        "raw_response": response.text
+                        "raw_response": response.text[:500]
                     }
             else:
                 return {"success": False, "error": "No response from AI"}
@@ -503,17 +553,19 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
             if response.text:
                 try:
-                    extracted_data = json.loads(response.text.strip())
+                    print(f"Raw hotel response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
                     return {
                         "success": True,
                         "data": extracted_data,
                         "confidence": 0.8
                     }
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
                     return {
                         "success": False,
                         "error": "Could not parse AI response as JSON",
-                        "raw_response": response.text
+                        "raw_response": response.text[:500]
                     }
             else:
                 return {"success": False, "error": "No response from AI"}
