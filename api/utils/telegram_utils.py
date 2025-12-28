@@ -150,9 +150,10 @@ class TelegramUtils:
         Returns:
             dict: {
                 "has_file": bool,
-                "file_type": str,  # "photo", "document", etc.
+                "file_type": str,  # "photo", "document", "pdf", etc.
                 "file_id": str,
-                "file_name": str
+                "file_name": str,
+                "mime_type": str
             }
         """
         # Check for photo
@@ -163,22 +164,36 @@ class TelegramUtils:
                 "has_file": True,
                 "file_type": "photo",
                 "file_id": largest_photo["file_id"],
-                "file_name": f"photo_{largest_photo['file_id']}.jpg"
+                "file_name": f"photo_{largest_photo['file_id']}.jpg",
+                "mime_type": "image/jpeg"
             }
 
-        # Check for document
+        # Check for document (PDFs, images as documents, etc.)
         if "document" in message:
             document = message["document"]
+            mime_type = document.get("mime_type", "")
+            file_name = document.get("file_name", "document")
+
+            # Determine specific type based on mime type
+            if mime_type == "application/pdf":
+                file_type = "pdf"
+            elif mime_type.startswith("image/"):
+                file_type = "image_document"
+            else:
+                file_type = "document"
+
             return {
                 "has_file": True,
-                "file_type": "document",
+                "file_type": file_type,
                 "file_id": document["file_id"],
-                "file_name": document.get("file_name", "document")
+                "file_name": file_name,
+                "mime_type": mime_type
             }
 
         return {
             "has_file": False,
             "file_type": None,
             "file_id": None,
-            "file_name": None
+            "file_name": None,
+            "mime_type": None
         }

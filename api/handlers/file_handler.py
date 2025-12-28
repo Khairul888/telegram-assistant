@@ -57,8 +57,19 @@ Create a trip first: /new_trip <trip name>""",
             # Download file
             file_data = await self.telegram.download_file(file_info["file_id"])
 
-            # Process with Gemini Vision
-            result = await self.gemini.process_document(file_data)
+            # Route to appropriate processing method based on file type
+            if file_info["file_type"] == "pdf":
+                # Process PDF with Gemini File API
+                result = await self.gemini.process_pdf(file_data)
+            elif file_info["file_type"] in ["photo", "image_document"]:
+                # Process image with Gemini Vision
+                result = await self.gemini.process_document(file_data)
+            else:
+                # Unsupported file type
+                return {
+                    "response": f"❌ Unsupported file type: {file_info.get('mime_type', 'unknown')}. Please send images or PDFs.",
+                    "keyboard": None
+                }
 
             if not result.get("success"):
                 return {

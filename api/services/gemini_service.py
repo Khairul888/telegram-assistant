@@ -307,6 +307,229 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
         except Exception as e:
             return {"success": False, "error": f"Hotel extraction error: {str(e)}"}
 
+    async def process_pdf(self, pdf_data: bytes, document_type: str = None) -> dict:
+        """
+        Process PDF document using Gemini.
+
+        Args:
+            pdf_data: PDF file bytes
+            document_type: Optional pre-classified type
+
+        Returns:
+            dict: Extraction result with document_type and extracted data
+        """
+        if not self.available:
+            return {"success": False, "error": "AI service not available"}
+
+        try:
+            print(f"Processing PDF: {len(pdf_data)} bytes")
+
+            # Validate PDF data
+            if not pdf_data:
+                return {"success": False, "error": "Empty PDF data received"}
+
+            if len(pdf_data) < 100:
+                return {"success": False, "error": f"PDF data too small: {len(pdf_data)} bytes"}
+
+            # Upload PDF to Gemini
+            import tempfile
+            import os
+
+            # Create temporary file for PDF
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                tmp_file.write(pdf_data)
+                tmp_path = tmp_file.name
+
+            try:
+                # Upload file to Gemini
+                uploaded_file = genai.upload_file(tmp_path)
+                print(f"PDF uploaded to Gemini: {uploaded_file.name}")
+
+                # Classify document type if not provided
+                if not document_type:
+                    classification_prompt = """Look at this PDF and classify it as one of these document types:
+- flight_ticket: Airline boarding passes, flight confirmations, e-tickets
+- receipt: Restaurant bills, shopping receipts, purchase invoices
+- hotel_booking: Hotel confirmations, accommodation bookings
+- itinerary: Travel schedules, trip plans, tour bookings
+- other_document: Any other travel-related document
+
+Return only the classification type, nothing else."""
+
+                    response = self.model.generate_content([classification_prompt, uploaded_file])
+                    classification = response.text.strip().lower() if response.text else "other_document"
+
+                    # Validate classification
+                    valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
+                    if classification not in valid_types:
+                        classification = "other_document"
+
+                    document_type = classification
+
+                # Extract data based on document type
+                if document_type == "flight_ticket":
+                    result = await self._extract_flight_from_pdf(uploaded_file)
+                elif document_type == "receipt":
+                    result = await self._extract_receipt_from_pdf(uploaded_file)
+                elif document_type == "hotel_booking":
+                    result = await self._extract_hotel_from_pdf(uploaded_file)
+                else:
+                    # Generic document
+                    result = {
+                        "success": True,
+                        "data": {},
+                        "confidence": 0.5
+                    }
+
+                # Add document_type to result
+                if result.get("success"):
+                    result["document_type"] = document_type
+
+                return result
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+        except Exception as e:
+            return {"success": False, "error": f"PDF processing error: {str(e)}"}
+
+    async def _extract_flight_from_pdf(self, uploaded_file) -> dict:
+        """Extract flight details from PDF using Gemini."""
+        try:
+            flight_prompt = """Analyze this flight ticket/e-ticket PDF and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "airline": "airline name",
+    "flight_number": "flight code",
+    "departure_city": "departure city name",
+    "departure_airport": "departure airport code",
+    "arrival_city": "arrival city name",
+    "arrival_airport": "arrival airport code",
+    "departure_date": "YYYY-MM-DD",
+    "departure_time": "HH:MM",
+    "arrival_date": "YYYY-MM-DD",
+    "arrival_time": "HH:MM",
+    "gate": "gate number",
+    "seat": "seat number",
+    "booking_reference": "confirmation code",
+    "passenger_name": "passenger name",
+    "class": "travel class"
+}"""
+
+            response = self.model.generate_content([flight_prompt, uploaded_file])
+
+            if response.text:
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Flight extraction error: {str(e)}"}
+
+    async def _extract_receipt_from_pdf(self, uploaded_file) -> dict:
+        """Extract receipt details from PDF using Gemini."""
+        try:
+            receipt_prompt = """Analyze this receipt PDF and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "merchant_name": "business name",
+    "location": "address or city",
+    "date": "YYYY-MM-DD",
+    "time": "HH:MM",
+    "items": [
+        {"name": "item name", "price": 0.00, "quantity": 1}
+    ],
+    "subtotal": 0.00,
+    "tax": 0.00,
+    "tip": 0.00,
+    "total": 0.00,
+    "currency": "USD",
+    "category": "food|transport|accommodation|entertainment|shopping",
+    "payment_method": "cash|card|digital"
+}"""
+
+            response = self.model.generate_content([receipt_prompt, uploaded_file])
+
+            if response.text:
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.85
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Receipt extraction error: {str(e)}"}
+
+    async def _extract_hotel_from_pdf(self, uploaded_file) -> dict:
+        """Extract hotel booking details from PDF using Gemini."""
+        try:
+            hotel_prompt = """Analyze this hotel booking confirmation PDF and extract the following information.
+Return ONLY a valid JSON object with these fields (use null for missing information):
+
+{
+    "hotel_name": "hotel name",
+    "location": "city and address",
+    "check_in_date": "YYYY-MM-DD",
+    "check_in_time": "HH:MM",
+    "check_out_date": "YYYY-MM-DD",
+    "check_out_time": "HH:MM",
+    "nights": 0,
+    "room_type": "room type",
+    "guests": 0,
+    "booking_reference": "confirmation number",
+    "total_cost": 0.00,
+    "currency": "USD",
+    "guest_name": "guest name"
+}"""
+
+            response = self.model.generate_content([hotel_prompt, uploaded_file])
+
+            if response.text:
+                try:
+                    extracted_data = json.loads(response.text.strip())
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError:
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Hotel extraction error: {str(e)}"}
+
     async def process_document(self, image_data: bytes, document_type: str = None) -> dict:
         """
         Process document based on type or auto-classify.
