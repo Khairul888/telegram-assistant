@@ -2,7 +2,7 @@
 # Simplified for serverless deployment on Vercel
 
 # Core AI service (Gemini Vision OCR + Text Generation)
-google-generativeai==0.3.2
+google-generativeai>=0.8.0
 
 # Database (Supabase PostgreSQL)
 supabase==2.1.0

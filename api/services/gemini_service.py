@@ -355,7 +355,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
     async def process_pdf(self, pdf_data: bytes, document_type: str = None) -> dict:
         """
-        Process PDF document using Gemini with inline data.
+        Process multi-page PDF document using Gemini File API.
 
         Args:
             pdf_data: PDF file bytes
@@ -377,19 +377,32 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
             if len(pdf_data) < 100:
                 return {"success": False, "error": f"PDF data too small: {len(pdf_data)} bytes"}
 
-            # Encode PDF to base64 for inline data
-            import base64
-            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
+            # Upload PDF using File API (better for multi-page documents)
+            import tempfile
+            import os
 
-            # Create inline data part for Gemini
-            pdf_part = {
-                "mime_type": "application/pdf",
-                "data": pdf_base64
-            }
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', mode='wb') as tmp_file:
+                tmp_file.write(pdf_data)
+                tmp_path = tmp_file.name
 
-            # Classify document type if not provided
-            if not document_type:
-                classification_prompt = """Look at this PDF and classify it as one of these document types:
+            try:
+                print(f"Uploading PDF to Gemini File API...")
+                uploaded_file = genai.upload_file(path=tmp_path, mime_type="application/pdf")
+                print(f"PDF uploaded: {uploaded_file.name}")
+
+                # Wait for file to be processed
+                import time
+                while uploaded_file.state.name == "PROCESSING":
+                    print("Waiting for file processing...")
+                    time.sleep(1)
+                    uploaded_file = genai.get_file(uploaded_file.name)
+
+                if uploaded_file.state.name == "FAILED":
+                    return {"success": False, "error": "File processing failed"}
+
+                # Classify document type if not provided
+                if not document_type:
+                    classification_prompt = """Analyze ALL PAGES of this PDF document and classify it as one of these types:
 - flight_ticket: Airline boarding passes, flight confirmations, e-tickets
 - receipt: Restaurant bills, shopping receipts, purchase invoices
 - hotel_booking: Hotel confirmations, accommodation bookings
@@ -398,65 +411,88 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
 Return only the classification type, nothing else."""
 
-                response = self.model.generate_content([classification_prompt, pdf_part])
-                classification = response.text.strip().lower() if response.text else "other_document"
+                    response = self.model.generate_content([uploaded_file, classification_prompt])
+                    classification = response.text.strip().lower() if response.text else "other_document"
 
-                # Validate classification
-                valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
-                if classification not in valid_types:
-                    classification = "other_document"
+                    # Validate classification
+                    valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
+                    if classification not in valid_types:
+                        classification = "other_document"
 
-                document_type = classification
+                    document_type = classification
+                    print(f"Classified as: {document_type}")
 
-            # Extract data based on document type
-            if document_type == "flight_ticket":
-                result = await self._extract_flight_from_pdf(pdf_part)
-            elif document_type == "receipt":
-                result = await self._extract_receipt_from_pdf(pdf_part)
-            elif document_type == "hotel_booking":
-                result = await self._extract_hotel_from_pdf(pdf_part)
-            else:
-                # Generic document
-                result = {
-                    "success": True,
-                    "data": {},
-                    "confidence": 0.5
-                }
+                # Extract data based on document type
+                if document_type == "flight_ticket":
+                    result = await self._extract_flight_from_pdf(uploaded_file)
+                elif document_type == "receipt":
+                    result = await self._extract_receipt_from_pdf(uploaded_file)
+                elif document_type == "hotel_booking":
+                    result = await self._extract_hotel_from_pdf(uploaded_file)
+                else:
+                    # Generic document
+                    result = {
+                        "success": True,
+                        "data": {},
+                        "confidence": 0.5
+                    }
 
-            # Add document_type to result
-            if result.get("success"):
-                result["document_type"] = document_type
+                # Add document_type to result
+                if result.get("success"):
+                    result["document_type"] = document_type
 
-            return result
+                # Clean up uploaded file
+                try:
+                    genai.delete_file(uploaded_file.name)
+                except:
+                    pass
+
+                return result
+
+            finally:
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
 
         except Exception as e:
             return {"success": False, "error": f"PDF processing error: {str(e)}"}
 
-    async def _extract_flight_from_pdf(self, pdf_part) -> dict:
+    async def _extract_flight_from_pdf(self, uploaded_file) -> dict:
         """Extract flight details from PDF using Gemini."""
         try:
-            flight_prompt = """Analyze this flight ticket/e-ticket PDF and extract the following information.
-Return ONLY a valid JSON object with these fields (use null for missing information):
+            flight_prompt = """You are a precise data extraction expert. Carefully read ALL PAGES of this flight document (boarding pass, e-ticket, or flight confirmation).
+
+INSTRUCTIONS:
+1. Extract EXACT text as it appears - do not paraphrase or abbreviate
+2. For dates, convert to YYYY-MM-DD format
+3. For times, use 24-hour HH:MM format
+4. Look for multiple representations of the same data and use the most complete one
+5. If you find multiple flights (like round trip), extract information for the FIRST/OUTBOUND flight only
+6. Check header, footer, and all sections of ALL pages
+
+Extract the following information and return ONLY a valid JSON object (no markdown, no explanation):
 
 {
-    "airline": "airline name",
-    "flight_number": "flight code",
-    "departure_city": "departure city name",
-    "departure_airport": "departure airport code",
-    "arrival_city": "arrival city name",
-    "arrival_airport": "arrival airport code",
-    "departure_date": "YYYY-MM-DD",
-    "departure_time": "HH:MM",
-    "arrival_date": "YYYY-MM-DD",
-    "arrival_time": "HH:MM",
-    "gate": "gate number",
-    "seat": "seat number",
-    "booking_reference": "confirmation code",
-    "passenger_name": "passenger name",
-    "class": "travel class"
-}"""
+    "airline": "full airline name exactly as shown",
+    "flight_number": "flight code with letters and numbers (e.g., AA123, DL4567)",
+    "departure_city": "full departure city name",
+    "departure_airport": "3-letter IATA code (e.g., LAX, JFK)",
+    "arrival_city": "full arrival city name",
+    "arrival_airport": "3-letter IATA code",
+    "departure_date": "YYYY-MM-DD format",
+    "departure_time": "HH:MM in 24-hour format",
+    "arrival_date": "YYYY-MM-DD format",
+    "arrival_time": "HH:MM in 24-hour format",
+    "gate": "gate number/letter if available",
+    "seat": "seat assignment (e.g., 12A, 23F)",
+    "booking_reference": "PNR/confirmation code (usually 6 characters)",
+    "passenger_name": "passenger full name",
+    "class": "cabin class (Economy, Business, First, etc.)"
+}
 
-            response = self.model.generate_content([flight_prompt, pdf_part])
+Use null for any field not found in the document."""
+
+            response = self.model.generate_content([uploaded_file, flight_prompt])
 
             if response.text:
                 try:
@@ -480,30 +516,45 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
         except Exception as e:
             return {"success": False, "error": f"Flight extraction error: {str(e)}"}
 
-    async def _extract_receipt_from_pdf(self, pdf_part) -> dict:
+    async def _extract_receipt_from_pdf(self, uploaded_file) -> dict:
         """Extract receipt details from PDF using Gemini."""
         try:
-            receipt_prompt = """Analyze this receipt PDF and extract the following information.
-Return ONLY a valid JSON object with these fields (use null for missing information):
+            receipt_prompt = """You are a precise receipt data extraction expert. Carefully read ALL PAGES of this receipt/invoice document.
+
+INSTRUCTIONS:
+1. Extract merchant name EXACTLY as it appears (usually at top in large text)
+2. Read ALL line items carefully - don't miss any
+3. For prices, extract numeric values with 2 decimal places
+4. Calculate subtotal by summing all item prices if not shown
+5. CRITICAL: The TOTAL is the final amount paid - look for words like "Total", "Amount Due", "Balance", "Grand Total"
+6. Check all pages for continuation of items or totals on subsequent pages
+7. Distinguish between subtotal, tax, tip, and total carefully
+
+Extract the following and return ONLY a valid JSON object (no markdown, no explanation):
 
 {
-    "merchant_name": "business name",
-    "location": "address or city",
-    "date": "YYYY-MM-DD",
-    "time": "HH:MM",
+    "merchant_name": "exact business name as shown",
+    "location": "full address or at least city",
+    "date": "YYYY-MM-DD format",
+    "time": "HH:MM format (if available)",
     "items": [
-        {"name": "item name", "price": 0.00, "quantity": 1}
+        {"name": "exact item name", "price": 12.99, "quantity": 2}
     ],
     "subtotal": 0.00,
     "tax": 0.00,
     "tip": 0.00,
     "total": 0.00,
-    "currency": "USD",
-    "category": "food|transport|accommodation|entertainment|shopping",
-    "payment_method": "cash|card|digital"
-}"""
+    "currency": "3-letter code like USD, EUR, GBP",
+    "category": "classify as: food, transport, accommodation, entertainment, or shopping",
+    "payment_method": "cash, card, or digital (if shown)"
+}
 
-            response = self.model.generate_content([receipt_prompt, pdf_part])
+IMPORTANT:
+- If items list is long, include ALL items
+- Ensure subtotal + tax + tip = total (approximately)
+- Use null only if field truly doesn't exist"""
+
+            response = self.model.generate_content([uploaded_file, receipt_prompt])
 
             if response.text:
                 try:
@@ -527,29 +578,43 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
         except Exception as e:
             return {"success": False, "error": f"Receipt extraction error: {str(e)}"}
 
-    async def _extract_hotel_from_pdf(self, pdf_part) -> dict:
+    async def _extract_hotel_from_pdf(self, uploaded_file) -> dict:
         """Extract hotel booking details from PDF using Gemini."""
         try:
-            hotel_prompt = """Analyze this hotel booking confirmation PDF and extract the following information.
-Return ONLY a valid JSON object with these fields (use null for missing information):
+            hotel_prompt = """You are a precise hotel booking data extraction expert. Carefully read ALL PAGES of this hotel booking confirmation or reservation document.
+
+INSTRUCTIONS:
+1. Extract hotel name EXACTLY as shown (look for property name, not chain name)
+2. Check ALL pages - confirmations often span multiple pages
+3. Calculate nights by counting days between check-in and check-out dates
+4. Look for confirmation/reference numbers (usually alphanumeric codes)
+5. Extract check-in and check-out times if specified (often 3:00 PM / 11:00 AM)
+6. Total cost might be shown per night or total - extract the TOTAL for entire stay
+
+Extract the following and return ONLY a valid JSON object (no markdown, no explanation):
 
 {
-    "hotel_name": "hotel name",
-    "location": "city and address",
-    "check_in_date": "YYYY-MM-DD",
-    "check_in_time": "HH:MM",
-    "check_out_date": "YYYY-MM-DD",
-    "check_out_time": "HH:MM",
+    "hotel_name": "exact hotel/property name",
+    "location": "full address or at least city and country",
+    "check_in_date": "YYYY-MM-DD format",
+    "check_in_time": "HH:MM format (default 15:00 if not specified)",
+    "check_out_date": "YYYY-MM-DD format",
+    "check_out_time": "HH:MM format (default 11:00 if not specified)",
     "nights": 0,
-    "room_type": "room type",
+    "room_type": "room category/type (e.g., Deluxe King, Standard Double)",
     "guests": 0,
-    "booking_reference": "confirmation number",
+    "booking_reference": "confirmation/reservation number",
     "total_cost": 0.00,
-    "currency": "USD",
-    "guest_name": "guest name"
-}"""
+    "currency": "3-letter code like USD, EUR, GBP",
+    "guest_name": "primary guest name"
+}
 
-            response = self.model.generate_content([hotel_prompt, pdf_part])
+IMPORTANT:
+- Nights = check_out_date minus check_in_date
+- Look for total amount carefully - might be labeled as "Total Charges", "Amount Due", "Grand Total"
+- Use null only if field truly doesn't exist"""
+
+            response = self.model.generate_content([uploaded_file, hotel_prompt])
 
             if response.text:
                 try:
