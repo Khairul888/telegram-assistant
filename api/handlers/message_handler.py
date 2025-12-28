@@ -50,9 +50,44 @@ Use the following information to answer questions:
 
 Answer the user's question based on this trip information. If you don't have the information, say so clearly."""
 
-        response = await self.gemini.generate_response(question_text, system_instruction)
+        # Determine if web search is needed
+        needs_search = await self._should_use_web_search(question_text)
+
+        if needs_search:
+            # Use search grounding for real-time information
+            result = await self.gemini.generate_response_with_search(
+                question_text, system_instruction
+            )
+            response = result.get("response", "I couldn't find an answer.")
+        else:
+            # Standard generation without search
+            response = await self.gemini.generate_response(question_text, system_instruction)
 
         return response
+
+    async def _should_use_web_search(self, question: str) -> bool:
+        """
+        Determine if question needs web search for real-time information.
+
+        Args:
+            question: User's question text
+
+        Returns:
+            bool: True if web search should be used
+        """
+        # Keywords that indicate need for real-time web data
+        search_keywords = [
+            'weather', 'forecast', 'temperature',
+            'recommend', 'best', 'top rated', 'popular',
+            'current', 'now', 'today', 'tomorrow',
+            'price', 'cost', 'how much',
+            'hours', 'open', 'closed', 'operating',
+            'events', 'happening', 'what to do',
+            'traffic', 'busy', 'crowded'
+        ]
+
+        question_lower = question.lower()
+        return any(keyword in question_lower for keyword in search_keywords)
 
     async def _build_trip_context(self, trip_id: int) -> str:
         """
@@ -120,6 +155,43 @@ Answer the user's question based on this trip information. If you don't have the
 
             for category, amount in by_category.items():
                 context_parts.append(f"- {category.capitalize()}: ${amount:.2f}")
+
+        # Get itinerary
+        itinerary_result = self.supabase.table('trip_itinerary')\
+            .select('*')\
+            .eq('trip_id', trip_id)\
+            .order('date')\
+            .order('time_order')\
+            .limit(20)\
+            .execute()
+
+        if itinerary_result.data:
+            context_parts.append("\nITINERARY:")
+            for item in itinerary_result.data:
+                time_str = f"{item.get('time', '')} " if item.get('time') else ""
+                location_str = f" at {item.get('location')}" if item.get('location') else ""
+                itinerary_info = f"- {item.get('date', 'Unknown date')} {time_str}{item.get('title', 'Activity')}{location_str}"
+                if item.get('description'):
+                    itinerary_info += f" - {item['description']}"
+                context_parts.append(itinerary_info)
+
+        # Get places wishlist
+        places_result = self.supabase.table('trip_places')\
+            .select('*')\
+            .eq('trip_id', trip_id)\
+            .eq('visited', False)\
+            .limit(15)\
+            .execute()
+
+        if places_result.data:
+            context_parts.append("\nPLACES TO VISIT:")
+            for place in places_result.data:
+                rating_str = f" ⭐{place.get('rating')}" if place.get('rating') else ""
+                address_str = f", {place.get('address')}" if place.get('address') else ""
+                place_info = f"- {place.get('name')} ({place.get('category', 'other').title()}){rating_str}{address_str}"
+                if place.get('notes'):
+                    place_info += f" - {place['notes']}"
+                context_parts.append(place_info)
 
         # Get documents
         docs_result = self.supabase.table('documents')\

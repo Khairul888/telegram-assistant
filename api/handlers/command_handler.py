@@ -5,7 +5,8 @@ from typing import Dict
 class CommandHandler:
     """Handles bot commands and multi-step conversation flows."""
 
-    def __init__(self, trip_service, expense_service, settlement_service, telegram_utils=None):
+    def __init__(self, trip_service, expense_service, settlement_service, telegram_utils=None,
+                 itinerary_service=None, places_service=None):
         """
         Initialize with service dependencies.
 
@@ -14,11 +15,15 @@ class CommandHandler:
             expense_service: ExpenseService instance
             settlement_service: SettlementService instance
             telegram_utils: TelegramUtils instance (optional, for inline keyboards)
+            itinerary_service: ItineraryService instance (optional, for itinerary commands)
+            places_service: PlacesService instance (optional, for places commands)
         """
         self.trip_service = trip_service
         self.expense_service = expense_service
         self.settlement_service = settlement_service
         self.telegram_utils = telegram_utils
+        self.itinerary_service = itinerary_service
+        self.places_service = places_service
 
     async def handle_new_trip(self, user_id: str, message_text: str) -> str:
         """
@@ -1310,3 +1315,146 @@ Select all who should split this expense:"""
     async def handle_cancel_edit_callback(self) -> str:
         """Handle cancelled expense edit."""
         return "Edit cancelled."
+
+    async def handle_itinerary(self, user_id: str) -> str:
+        """
+        Handle /itinerary command - show trip schedule.
+
+        Args:
+            user_id: Telegram user ID
+
+        Returns:
+            str: Formatted itinerary or error message
+        """
+        if not self.itinerary_service:
+            return "Itinerary feature not available."
+
+        # Get current trip
+        trip = await self.trip_service.get_current_trip(user_id)
+        if not trip:
+            return """❌ No active trip found!
+
+Create a trip first: /new_trip <trip name>"""
+
+        # Get itinerary items
+        items = await self.itinerary_service.get_trip_itinerary(trip['id'])
+
+        if not items:
+            return f"""📅 No itinerary yet for {trip['trip_name']}!
+
+You can paste your schedule and I'll detect it automatically, or add items manually."""
+
+        # Format itinerary by day
+        by_day = {}
+        for item in items:
+            day_order = item.get('day_order', 0)
+            date = item.get('date', 'Unknown date')
+            key = f"Day {day_order}" if day_order else date
+
+            if key not in by_day:
+                by_day[key] = []
+            by_day[key].append(item)
+
+        # Build response
+        response_lines = [f"📅 Itinerary for {trip['trip_name']}:\n"]
+
+        for day_key in sorted(by_day.keys()):
+            day_items = by_day[day_key]
+            response_lines.append(f"\n**{day_key}:**")
+
+            for item in sorted(day_items, key=lambda x: (x.get('time_order', 0), x.get('time', ''))):
+                time = item.get('time', '')
+                title = item.get('title', 'Activity')
+                location = item.get('location', '')
+                description = item.get('description', '')
+
+                time_str = f"{time} - " if time else ""
+                location_str = f" ({location})" if location else ""
+                desc_str = f"\n    {description}" if description else ""
+
+                response_lines.append(f"  • {time_str}{title}{location_str}{desc_str}")
+
+        return "\n".join(response_lines)
+
+    async def handle_wishlist(self, user_id: str) -> str:
+        """
+        Handle /wishlist command - show places to visit.
+
+        Args:
+            user_id: Telegram user ID
+
+        Returns:
+            str: Formatted wishlist or error message
+        """
+        if not self.places_service:
+            return "Wishlist feature not available."
+
+        # Get current trip
+        trip = await self.trip_service.get_current_trip(user_id)
+        if not trip:
+            return """❌ No active trip found!
+
+Create a trip first: /new_trip <trip name>"""
+
+        # Get places
+        all_places = await self.places_service.get_trip_places(trip['id'])
+
+        if not all_places:
+            return f"""📍 No places in your wishlist yet for {trip['trip_name']}!
+
+Mention places you want to visit and I'll add them automatically, or share Google Maps links."""
+
+        # Get summary stats
+        summary = await self.places_service.get_places_summary(trip['id'])
+
+        # Group by category
+        by_category = {}
+        for place in all_places:
+            category = place.get('category', 'other')
+            if category not in by_category:
+                by_category[category] = []
+            by_category[category].append(place)
+
+        # Build response
+        response_lines = [f"📍 Places Wishlist for {trip['trip_name']}:\n"]
+
+        # Add summary
+        total = summary.get('total_places', 0)
+        visited = summary.get('visited_count', 0)
+        avg_rating = summary.get('avg_rating')
+
+        response_lines.append(f"Total: {total} places | Visited: {visited}")
+        if avg_rating:
+            response_lines.append(f"Avg Rating: ⭐ {avg_rating}")
+        response_lines.append("")
+
+        # Category order
+        category_order = ['restaurant', 'attraction', 'shopping', 'nightlife', 'other']
+        category_emoji = {
+            'restaurant': '🍽️',
+            'attraction': '🏛️',
+            'shopping': '🛍️',
+            'nightlife': '🍻',
+            'other': '📍'
+        }
+
+        for category in category_order:
+            if category in by_category:
+                places = by_category[category]
+                emoji = category_emoji.get(category, '📍')
+
+                response_lines.append(f"\n**{emoji} {category.title()} ({len(places)}):**")
+
+                for place in places[:10]:  # Limit to 10 per category
+                    name = place.get('name', 'Unknown')
+                    rating = place.get('rating')
+                    visited = place.get('visited', False)
+                    notes = place.get('notes', '')
+
+                    rating_str = f" ⭐{rating}" if rating else ""
+                    visited_str = " ✓" if visited else ""
+                    notes_str = f" - {notes}" if notes else ""
+
+                    response_lines.append(f"  • {name}{rating_str}{visited_str}{notes_str}")
+
+        return "\n".join(response_lines)

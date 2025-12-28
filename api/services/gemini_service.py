@@ -20,7 +20,7 @@ class GeminiService:
             api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
             if api_key:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-2.5-flash')
+                self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
                 self.available = True
             else:
                 self.available = False
@@ -692,3 +692,246 @@ IMPORTANT:
 
         except Exception as e:
             return {"success": False, "error": f"Document processing error: {str(e)}"}
+
+    async def classify_message_intent(self, text: str) -> str:
+        """
+        Classify user message intent for conversational detection.
+
+        Args:
+            text: User message text
+
+        Returns:
+            str: One of: itinerary_paste, place_mention, google_maps_url, question, other
+        """
+        if not self.available:
+            return "other"
+
+        try:
+            # Quick URL check for Google Maps links
+            if 'maps.google.com' in text or 'maps.app.goo.gl' in text or 'goo.gl/maps' in text:
+                return "google_maps_url"
+
+            # AI classification for text
+            prompt = f"""Classify this user message into ONE category:
+
+Message: "{text}"
+
+Categories:
+1. itinerary_paste - User is sharing their trip schedule/itinerary with dates and activities
+2. place_mention - User mentions wanting to visit/try a specific restaurant or place
+3. question - User is asking a question
+4. other - Anything else
+
+Respond with ONLY the category name, nothing else."""
+
+            response = self.model.generate_content(prompt)
+            intent = response.text.strip().lower()
+
+            # Validate response
+            valid_intents = ['itinerary_paste', 'place_mention', 'question', 'other']
+            if intent in valid_intents:
+                return intent
+            else:
+                return "other"
+
+        except Exception as e:
+            print(f"Error classifying intent: {e}")
+            return "other"
+
+    async def extract_itinerary_from_text(self, text: str, trip_start_date: str = None) -> dict:
+        """
+        Extract structured itinerary data from pasted schedule text.
+
+        Args:
+            text: User's pasted itinerary text
+            trip_start_date: Optional trip start date for relative date calculation (YYYY-MM-DD)
+
+        Returns:
+            dict: {
+                "success": bool,
+                "items": [{"date": str, "time": str, "title": str, "description": str,
+                          "location": str, "category": str, "day_order": int, "time_order": int}],
+                "summary": str
+            }
+        """
+        if not self.available:
+            return {"success": False, "error": "Gemini not available"}
+
+        try:
+            context = f"Trip start date: {trip_start_date}" if trip_start_date else "No trip start date provided"
+
+            prompt = f"""Extract itinerary information from this text and return ONLY valid JSON.
+
+{context}
+
+Text:
+{text}
+
+Extract each activity/event with:
+- date (YYYY-MM-DD format, or null if unclear)
+- time (HH:MM format in 24h, or null if unclear)
+- title (brief activity name)
+- description (optional details)
+- location (place name if mentioned)
+- category (one of: activity, dining, transport, other)
+- day_order (which day of the trip: 1, 2, 3, etc.)
+- time_order (order within that day: 1, 2, 3, etc.)
+
+Also provide a human-readable summary.
+
+Return JSON in this exact format:
+{{
+    "items": [
+        {{
+            "date": "2024-03-15",
+            "time": "09:00",
+            "title": "Visit Tsukiji Market",
+            "description": "Fresh sushi breakfast",
+            "location": "Tsukiji",
+            "category": "activity",
+            "day_order": 1,
+            "time_order": 1
+        }}
+    ],
+    "summary": "Day 1: Morning visit to Tsukiji Market..."
+}}
+
+JSON:"""
+
+            response = self.model.generate_content(prompt)
+            result_json = self._extract_json_from_response(response.text)
+
+            if not result_json.get("items"):
+                return {"success": False, "error": "No itinerary items found"}
+
+            return {
+                "success": True,
+                "items": result_json.get("items", []),
+                "summary": result_json.get("summary", "Itinerary extracted")
+            }
+
+        except Exception as e:
+            print(f"Error extracting itinerary: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def extract_place_from_text(self, text: str) -> dict:
+        """
+        Extract place information from casual mention.
+
+        Args:
+            text: User message mentioning a place (e.g., "I want to try Sukiyabashi Jiro")
+
+        Returns:
+            dict: {
+                "success": bool,
+                "name": str,
+                "suggested_category": str (restaurant, attraction, shopping, nightlife, other),
+                "notes": str
+            }
+        """
+        if not self.available:
+            return {"success": False, "error": "Gemini not available"}
+
+        try:
+            prompt = f"""Extract place information from this message and return ONLY valid JSON.
+
+Message: "{text}"
+
+Extract:
+- name: The place name mentioned
+- suggested_category: Best category (restaurant, attraction, shopping, nightlife, other)
+- notes: Any additional context from the message
+
+Return JSON in this exact format:
+{{
+    "name": "Place Name",
+    "suggested_category": "restaurant",
+    "notes": "Any context from user message"
+}}
+
+JSON:"""
+
+            response = self.model.generate_content(prompt)
+            result_json = self._extract_json_from_response(response.text)
+
+            if not result_json.get("name"):
+                return {"success": False, "error": "No place name found"}
+
+            return {
+                "success": True,
+                "name": result_json.get("name"),
+                "suggested_category": result_json.get("suggested_category", "other"),
+                "notes": result_json.get("notes", "")
+            }
+
+        except Exception as e:
+            print(f"Error extracting place: {e}")
+            return {"success": False, "error": str(e)}
+
+    async def generate_response_with_search(self, prompt: str,
+                                           system_instruction: str = None) -> dict:
+        """
+        Generate AI response with Google Search grounding for real-time information.
+
+        Args:
+            prompt: User question/prompt
+            system_instruction: Optional system instruction
+
+        Returns:
+            dict: {
+                "response": str,
+                "search_queries": list (if available),
+                "grounding_metadata": dict (if available)
+            }
+        """
+        if not self.available:
+            return {"response": "AI service not available", "search_queries": [], "grounding_metadata": {}}
+
+        try:
+            # Create model with search grounding
+            search_model = genai.GenerativeModel(
+                'gemini-2.0-flash-exp',
+                tools='google_search_retrieval'
+            )
+
+            # Generate with search
+            if system_instruction:
+                full_prompt = f"{system_instruction}\n\n{prompt}"
+            else:
+                full_prompt = prompt
+
+            response = search_model.generate_content(full_prompt)
+
+            # Extract grounding metadata if available
+            grounding_metadata = {}
+            search_queries = []
+
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'grounding_metadata'):
+                    grounding_metadata = candidate.grounding_metadata
+                    if hasattr(grounding_metadata, 'search_entry_point'):
+                        search_queries = getattr(grounding_metadata.search_entry_point, 'rendered_content', [])
+
+            return {
+                "response": response.text,
+                "search_queries": search_queries,
+                "grounding_metadata": grounding_metadata
+            }
+
+        except Exception as e:
+            print(f"Error generating response with search: {e}")
+            # Fallback to regular generation
+            try:
+                response = self.model.generate_content(prompt)
+                return {
+                    "response": response.text,
+                    "search_queries": [],
+                    "grounding_metadata": {}
+                }
+            except:
+                return {
+                    "response": f"Error: {str(e)}",
+                    "search_queries": [],
+                    "grounding_metadata": {}
+                }

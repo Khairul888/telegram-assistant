@@ -32,16 +32,20 @@ gemini = None
 trip_service = None
 expense_service = None
 settlement_service = None
+itinerary_service = None
+places_service = None
 telegram_utils = None
 command_handler = None
 file_handler = None
 message_handler = None
+intent_handler = None
 
 
 def initialize_services():
     """Initialize all services lazily on first request."""
     global _services_initialized, supabase, gemini, trip_service, expense_service
-    global settlement_service, telegram_utils, command_handler, file_handler, message_handler
+    global settlement_service, itinerary_service, places_service, telegram_utils
+    global command_handler, file_handler, message_handler, intent_handler
 
     if _services_initialized:
         return
@@ -59,11 +63,23 @@ def initialize_services():
         expense_service = ExpenseService(supabase)
         settlement_service = SettlementService(expense_service)
 
+        # Initialize new services for itinerary and places
+        from api.services.itinerary_service import ItineraryService
+        from api.services.places_service import PlacesService
+        itinerary_service = ItineraryService(supabase)
+        places_service = PlacesService(supabase)
+
         # Initialize handlers
-        command_handler = CommandHandler(trip_service, expense_service, settlement_service, telegram_utils)
+        command_handler = CommandHandler(trip_service, expense_service, settlement_service,
+                                        telegram_utils, itinerary_service, places_service)
         file_handler = FileHandler(gemini, trip_service, expense_service,
                                    settlement_service, telegram_utils, supabase)
         message_handler = MessageHandler(gemini, trip_service, supabase)
+
+        # Initialize intent handler for conversational detection
+        from api.handlers.intent_handler import IntentHandler
+        intent_handler = IntentHandler(gemini, itinerary_service, places_service,
+                                      trip_service, telegram_utils)
 
         _services_initialized = True
         print("Services initialized successfully")
@@ -169,6 +185,12 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_edit_amount_text(user_id, text)
             elif state == 'awaiting_edit_description':
                 response = await command_handler.handle_edit_description_text(user_id, text)
+            elif state == 'awaiting_itinerary_confirmation':
+                # Handled via callback, ignore text
+                response = "Please use the buttons above to confirm or cancel."
+            elif state == 'awaiting_place_category':
+                # Handled via callback, ignore text
+                response = "Please select a category using the buttons above."
             elif text.startswith('/new_trip'):
                 response = await command_handler.handle_new_trip(user_id, text)
             elif text.startswith('/add_expense'):
@@ -192,9 +214,45 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_start()
             elif text.startswith('/help'):
                 response = await command_handler.handle_help()
+            elif text.startswith('/itinerary'):
+                response = await command_handler.handle_itinerary(user_id)
+            elif text.startswith('/wishlist'):
+                response = await command_handler.handle_wishlist(user_id)
             else:
-                # Q&A with trip context
-                response = await message_handler.handle_question(user_id, text)
+                # Intent detection (only if no active state)
+                if not state:
+                    trip = await trip_service.get_current_trip(user_id)
+                    if trip:
+                        # Classify message intent
+                        intent = await gemini.classify_message_intent(text)
+
+                        if intent == "google_maps_url":
+                            # Handle Google Maps URL
+                            result = await intent_handler.handle_google_maps_url(
+                                user_id, chat_id, text, trip
+                            )
+                            if result.get("handled"):
+                                response = result.get("response")
+                        elif intent == "itinerary_paste":
+                            # Handle itinerary detection
+                            result = await intent_handler.handle_itinerary_detection(
+                                user_id, chat_id, text, trip
+                            )
+                            if result.get("handled"):
+                                # Response already sent with keyboard
+                                return
+                        elif intent == "place_mention":
+                            # Handle place mention
+                            result = await intent_handler.handle_place_detection(
+                                user_id, chat_id, text, trip
+                            )
+                            if result.get("handled"):
+                                # Response already sent with keyboard
+                                return
+
+                # Fallback to Q&A if no intent matched or no trip
+                if not response:
+                    response = await message_handler.handle_question(user_id, text)
 
             if response:
                 await telegram_utils.send_message(chat_id, response)
@@ -335,6 +393,22 @@ class handler(BaseHTTPRequestHandler):
             elif callback_data.startswith("cancel_edit:"):
                 # Cancel edit
                 response = await command_handler.handle_cancel_edit_callback()
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("itinerary_confirm:"):
+                # Itinerary confirmation
+                confirmed = callback_data.split(":")[1] == "yes"
+                response = await intent_handler.handle_itinerary_confirmation(
+                    user_id, chat_id, confirmed
+                )
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("place_category:"):
+                # Place category selection
+                category = callback_data.split(":")[1]
+                response = await intent_handler.handle_place_category_selection(
+                    user_id, chat_id, category
+                )
                 if response:
                     await telegram_utils.send_message(chat_id, response)
 
