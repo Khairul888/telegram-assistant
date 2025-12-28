@@ -982,3 +982,331 @@ Use /list_expenses to see remaining expenses."""
     async def handle_cancel_delete_callback(self) -> str:
         """Handle cancelled expense deletion."""
         return "Deletion cancelled. Expense was not deleted."
+
+    async def handle_edit_expense_callback(self, user_id: str, chat_id: str, expense_id: int) -> Dict:
+        """
+        Handle edit expense request - show edit options.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            expense_id: Expense ID to edit
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        # Get expense details
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return {"response": "Expense not found.", "keyboard": None}
+
+        amount = expense.get('total_amount', 0)
+        merchant = expense.get('merchant_name', 'Unknown')
+        paid_by = expense.get('paid_by', 'Unknown')
+        split_between = expense.get('split_between', [])
+        split_amounts = expense.get('split_amounts', {})
+
+        # Show current details and edit options
+        split_list = '\n'.join([f"  • {p}: ${amt:.2f}" for p, amt in split_amounts.items()]) if split_amounts else "  Not split yet"
+
+        message = f"""Edit expense:
+
+${amount:.2f} - {merchant}
+Paid by: {paid_by}
+Split among: {', '.join(split_between) if split_between else 'None'}
+
+Current split:
+{split_list}
+
+What would you like to edit?"""
+
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "Change amount", "callback_data": f"edit_amount:{expense_id}"}],
+                [{"text": "Change description", "callback_data": f"edit_description:{expense_id}"}],
+                [{"text": "Change who paid", "callback_data": f"edit_payer:{expense_id}"}],
+                [{"text": "Change split", "callback_data": f"edit_split:{expense_id}"}],
+                [{"text": "Cancel", "callback_data": f"cancel_edit:{expense_id}"}]
+            ]
+        }
+
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_edit_amount_callback(self, user_id: str, chat_id: str, expense_id: int) -> str:
+        """Handle edit amount request."""
+        # Get current amount
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        current_amount = expense.get('total_amount', 0)
+
+        # Store in session
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_edit_amount',
+            context={'expense_id': expense_id}
+        )
+
+        return f"""Enter new amount:
+
+Current: ${current_amount:.2f}
+
+Reply with the new amount (e.g., 75.50)"""
+
+    async def handle_edit_amount_text(self, user_id: str, text: str) -> str:
+        """Handle new amount text input."""
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+        expense_id = context.get('expense_id')
+
+        if not expense_id:
+            return "Error: Edit session expired. Please start over."
+
+        # Parse amount
+        try:
+            new_amount = float(text.strip())
+            if new_amount <= 0:
+                return "Amount must be greater than 0. Please enter a valid amount."
+        except ValueError:
+            return "Invalid amount. Please enter a number (e.g., 75.50)"
+
+        # Get expense
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        old_amount = expense.get('total_amount', 0)
+
+        # Update expense amount
+        from api.utils.db_utils import get_supabase_client
+        supabase = get_supabase_client()
+
+        # Update total_amount
+        supabase.table('expenses').update({
+            'total_amount': new_amount
+        }).eq('id', expense_id).execute()
+
+        # Recalculate split amounts if expense is already split
+        split_between = expense.get('split_between', [])
+        if split_between:
+            per_person = new_amount / len(split_between)
+            new_split_amounts = {p: round(per_person, 2) for p in split_between}
+            supabase.table('expenses').update({
+                'split_amounts': new_split_amounts
+            }).eq('id', expense_id).execute()
+
+        # Clear session
+        await self.trip_service.clear_conversation_state(user_id)
+
+        return f"""Amount updated!
+
+Old: ${old_amount:.2f}
+New: ${new_amount:.2f}
+
+Use /list_expenses to see updated expense."""
+
+    async def handle_edit_description_callback(self, user_id: str, chat_id: str, expense_id: int) -> str:
+        """Handle edit description request."""
+        # Get current description
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        current_description = expense.get('merchant_name', 'Unknown')
+
+        # Store in session
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_edit_description',
+            context={'expense_id': expense_id}
+        )
+
+        return f"""Enter new description:
+
+Current: {current_description}
+
+Reply with the new description"""
+
+    async def handle_edit_description_text(self, user_id: str, text: str) -> str:
+        """Handle new description text input."""
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+        expense_id = context.get('expense_id')
+
+        if not expense_id:
+            return "Error: Edit session expired. Please start over."
+
+        new_description = text.strip()
+        if not new_description:
+            return "Description cannot be empty. Please enter a description."
+
+        # Get expense
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        old_description = expense.get('merchant_name', 'Unknown')
+
+        # Update expense description
+        from api.utils.db_utils import get_supabase_client
+        supabase = get_supabase_client()
+        supabase.table('expenses').update({
+            'merchant_name': new_description
+        }).eq('id', expense_id).execute()
+
+        # Clear session
+        await self.trip_service.clear_conversation_state(user_id)
+
+        return f"""Description updated!
+
+Old: {old_description}
+New: {new_description}
+
+Use /list_expenses to see updated expense."""
+
+    async def handle_edit_payer_callback(self, user_id: str, chat_id: str, expense_id: int) -> Dict:
+        """Handle edit payer request - show participant selection."""
+        # Get expense and trip
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return {"response": "Expense not found.", "keyboard": None}
+
+        trip_id = expense['trip_id']
+        trip_result = await self.trip_service.get_current_trip(user_id)
+
+        # Also try to get trip by ID if current trip doesn't match
+        if not trip_result or trip_result.get('id') != trip_id:
+            from api.utils.db_utils import get_supabase_client
+            supabase = get_supabase_client()
+            trip_data = supabase.table('trips').select('*').eq('id', trip_id).execute()
+            if trip_data.data:
+                trip_result = trip_data.data[0]
+
+        if not trip_result:
+            return {"response": "Trip not found.", "keyboard": None}
+
+        participants = trip_result.get('participants', [])
+        current_payer = expense.get('paid_by', 'Unknown')
+
+        # Store in session
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_edit_payer',
+            context={'expense_id': expense_id}
+        )
+
+        # Create keyboard
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": p, "callback_data": f"edit_payer_select:{expense_id}:{p}"}]
+                for p in participants
+            ]
+        }
+
+        message = f"""Select new payer:
+
+Current payer: {current_payer}"""
+
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_edit_payer_select_callback(self, user_id: str, expense_id: int, new_payer: str) -> str:
+        """Handle payer selection for edit."""
+        # Get expense
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return "Expense not found."
+
+        old_payer = expense.get('paid_by', 'Unknown')
+
+        # Update payer
+        from api.utils.db_utils import get_supabase_client
+        supabase = get_supabase_client()
+        supabase.table('expenses').update({
+            'paid_by': new_payer
+        }).eq('id', expense_id).execute()
+
+        # Clear session
+        await self.trip_service.clear_conversation_state(user_id)
+
+        return f"""Payer updated!
+
+Old: {old_payer}
+New: {new_payer}
+
+Use /list_expenses to see updated expense."""
+
+    async def handle_edit_split_callback(self, user_id: str, chat_id: str, expense_id: int) -> Dict:
+        """Handle edit split request - restart the split flow."""
+        # Get expense
+        expense = await self.expense_service.get_expense_by_id(expense_id)
+        if not expense:
+            return {"response": "Expense not found.", "keyboard": None}
+
+        trip_id = expense['trip_id']
+        amount = expense.get('total_amount', 0)
+        merchant = expense.get('merchant_name', 'Unknown')
+        paid_by = expense.get('paid_by', 'Unknown')
+
+        # Get trip
+        from api.utils.db_utils import get_supabase_client
+        supabase = get_supabase_client()
+        trip_data = supabase.table('trips').select('*').eq('id', trip_id).execute()
+        if not trip_data.data:
+            return {"response": "Trip not found.", "keyboard": None}
+
+        trip = trip_data.data[0]
+        participants = trip.get('participants', [])
+
+        # Store in session
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_expense_participants',
+            context={
+                'expense_id': expense_id,
+                'expense_amount': amount,
+                'expense_description': merchant,
+                'paid_by': paid_by,
+                'trip_id': trip_id,
+                'participants_selected': []
+            }
+        )
+
+        # Create keyboard for participant selection
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": f"☐ {p}", "callback_data": f"participant_toggle:{expense_id}:{p}"}]
+                for p in participants
+            ] + [
+                [{"text": "Done", "callback_data": f"participants_done:{expense_id}"}]
+            ]
+        }
+
+        message = f"""${amount:.2f} - {merchant}
+Paid by: {paid_by}
+
+Who is involved in this expense?
+Select all who should split this expense:"""
+
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_cancel_edit_callback(self) -> str:
+        """Handle cancelled expense edit."""
+        return "Edit cancelled."

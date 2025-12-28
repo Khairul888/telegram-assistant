@@ -165,6 +165,10 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_participants_response(user_id, text)
             elif state == 'awaiting_custom_split':
                 response = await command_handler.handle_custom_split_text(user_id, chat_id, text)
+            elif state == 'awaiting_edit_amount':
+                response = await command_handler.handle_edit_amount_text(user_id, text)
+            elif state == 'awaiting_edit_description':
+                response = await command_handler.handle_edit_description_text(user_id, text)
             elif text.startswith('/new_trip'):
                 response = await command_handler.handle_new_trip(user_id, text)
             elif text.startswith('/add_expense'):
@@ -284,13 +288,55 @@ class handler(BaseHTTPRequestHandler):
                 if response:
                     await telegram_utils.send_message(chat_id, response)
             elif callback_data.startswith("edit_expense:"):
-                # Edit expense request - not fully implemented yet
+                # Edit expense request - show edit menu
                 expense_id = int(callback_data.split(":")[1])
-                response_dict = {"response": "Edit functionality coming soon! For now, you can delete and re-add the expense.", "keyboard": None}
+                response_dict = await command_handler.handle_edit_expense_callback(
+                    user_id, chat_id, expense_id
+                )
+            elif callback_data.startswith("edit_amount:"):
+                # Edit amount request
+                expense_id = int(callback_data.split(":")[1])
+                response = await command_handler.handle_edit_amount_callback(
+                    user_id, chat_id, expense_id
+                )
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("edit_description:"):
+                # Edit description request
+                expense_id = int(callback_data.split(":")[1])
+                response = await command_handler.handle_edit_description_callback(
+                    user_id, chat_id, expense_id
+                )
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("edit_payer_select:"):
+                # Edit payer selection
+                parts = callback_data.split(":", 2)
+                if len(parts) == 3:
+                    expense_id = int(parts[1])
+                    new_payer = parts[2]
+                    response = await command_handler.handle_edit_payer_select_callback(
+                        user_id, expense_id, new_payer
+                    )
+                    if response:
+                        await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("edit_payer:"):
+                # Edit payer request
+                expense_id = int(callback_data.split(":")[1])
+                response_dict = await command_handler.handle_edit_payer_callback(
+                    user_id, chat_id, expense_id
+                )
+            elif callback_data.startswith("edit_split:"):
+                # Edit split request
+                expense_id = int(callback_data.split(":")[1])
+                response_dict = await command_handler.handle_edit_split_callback(
+                    user_id, chat_id, expense_id
+                )
             elif callback_data.startswith("cancel_edit:"):
                 # Cancel edit
-                response = "Edit cancelled."
-                await telegram_utils.send_message(chat_id, response)
+                response = await command_handler.handle_cancel_edit_callback()
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
 
             # Send response if provided (for dict responses)
             if response_dict and response_dict.get("response"):
