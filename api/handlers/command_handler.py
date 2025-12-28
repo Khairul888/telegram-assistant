@@ -350,11 +350,30 @@ Examples:
                 "keyboard": None
             }
 
+        # Create expense record immediately (will be updated with split info later)
+        from datetime import datetime
+        result = await self.expense_service.create_expense(
+            user_id=user_id,
+            trip_id=trip['id'],
+            merchant_name=description,
+            total_amount=amount,
+            transaction_date=datetime.now().date().isoformat()
+        )
+
+        if not result.get("success"):
+            return {
+                "response": f"Error creating expense: {result.get('error')}",
+                "keyboard": None
+            }
+
+        expense_id = result['expense_id']
+
         # Store in session context
         await self.trip_service.get_or_update_session(
             user_id,
             state='awaiting_expense_payer',
             context={
+                'expense_id': expense_id,
                 'expense_amount': amount,
                 'expense_description': description,
                 'trip_id': trip['id']
