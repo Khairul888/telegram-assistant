@@ -5,7 +5,7 @@ from typing import Dict
 class CommandHandler:
     """Handles bot commands and multi-step conversation flows."""
 
-    def __init__(self, trip_service, expense_service, settlement_service):
+    def __init__(self, trip_service, expense_service, settlement_service, telegram_utils=None):
         """
         Initialize with service dependencies.
 
@@ -13,10 +13,12 @@ class CommandHandler:
             trip_service: TripService instance
             expense_service: ExpenseService instance
             settlement_service: SettlementService instance
+            telegram_utils: TelegramUtils instance (optional, for inline keyboards)
         """
         self.trip_service = trip_service
         self.expense_service = expense_service
         self.settlement_service = settlement_service
+        self.telegram_utils = telegram_utils
 
     async def handle_new_trip(self, user_id: str, message_text: str) -> str:
         """
@@ -277,6 +279,8 @@ TRIPS:
 • /current_trip - Show active trip details
 
 EXPENSES:
+• /add_expense <amount> <description> - Add expense manually
+  Example: /add_expense 50.00 Dinner at restaurant
 • Upload receipt photo → I'll extract details & ask how to split
 • /balance - See running balance and settlements
 
@@ -293,3 +297,187 @@ Tips:
   - Latest trip is automatically active
   - All uploads are linked to current trip
   - Use simple names for participants (no Telegram accounts needed)"""
+
+    async def handle_add_expense(self, user_id: str, chat_id: str, message_text: str) -> Dict:
+        """
+        Handle /add_expense command - start manual expense entry flow.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            message_text: Full command message
+
+        Returns:
+            dict: {"response": str or None, "keyboard": dict or None}
+        """
+        # Check active trip
+        trip = await self.trip_service.get_current_trip(user_id)
+        if not trip:
+            return {
+                "response": """No active trip found!
+
+Create a trip first: /new_trip <trip name>""",
+                "keyboard": None
+            }
+
+        # Parse command: /add_expense 50.00 Dinner at restaurant
+        parts = message_text.split(maxsplit=2)
+        if len(parts) < 3:
+            return {
+                "response": """Please provide amount and description!
+
+Usage: /add_expense <amount> <description>
+
+Examples:
+• /add_expense 50.00 Dinner at restaurant
+• /add_expense 15.50 Taxi to airport
+• /add_expense 100 Hotel tip""",
+                "keyboard": None
+            }
+
+        try:
+            amount = float(parts[1])
+            description = parts[2].strip()
+        except ValueError:
+            return {
+                "response": "Invalid amount. Please use a number like: 50.00",
+                "keyboard": None
+            }
+
+        if amount <= 0:
+            return {
+                "response": "Amount must be greater than 0",
+                "keyboard": None
+            }
+
+        # Store in session context
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_expense_payer',
+            context={
+                'expense_amount': amount,
+                'expense_description': description,
+                'trip_id': trip['id']
+            }
+        )
+
+        # Create keyboard for selecting who paid
+        participants = trip.get('participants', [])
+        if not isinstance(participants, list) or not participants:
+            return {
+                "response": "No participants in trip. Please add participants when creating the trip.",
+                "keyboard": None
+            }
+
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": p, "callback_data": f"expense_paid_by:{p}"}]
+                for p in participants
+            ]
+        }
+
+        # Send message with keyboard
+        if self.telegram_utils:
+            message = f"""💰 Adding expense: ${amount:.2f}
+📝 {description}
+
+Who paid for this?"""
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}  # Already sent
+        else:
+            # Fallback if no telegram_utils
+            participants_list = ', '.join(participants)
+            return {
+                "response": f"""Adding expense: ${amount:.2f} - {description}
+
+Who paid? Reply with one of: {participants_list}""",
+                "keyboard": None
+            }
+
+    async def handle_expense_payer_callback(self, user_id: str, chat_id: str, paid_by: str) -> str:
+        """
+        Handle callback when user selects who paid for manual expense.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            paid_by: Name of person who paid
+
+        Returns:
+            str: Response message
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        trip_id = context.get('trip_id')
+
+        if not all([amount, description, trip_id]):
+            return "Error: Expense session expired. Please start over with /add_expense"
+
+        # Get trip to get participants
+        trip = await self.trip_service.get_current_trip(user_id)
+        if not trip:
+            return "Error: Trip not found"
+
+        participants = trip.get('participants', [])
+
+        # Create expense
+        from datetime import datetime
+        result = await self.expense_service.create_expense(
+            user_id=user_id,
+            trip_id=trip_id,
+            merchant_name=description,
+            total_amount=amount,
+            paid_by=paid_by,
+            split_between=participants,
+            transaction_date=datetime.now().date().isoformat()
+        )
+
+        if not result.get("success"):
+            return f"Error creating expense: {result.get('error')}"
+
+        expense_id = result['expense_id']
+
+        # Calculate split amounts (even split)
+        split_amounts = {}
+        per_person = amount / len(participants)
+        for participant in participants:
+            split_amounts[participant] = round(per_person, 2)
+
+        # Update expense with split
+        update_result = await self.expense_service.update_expense_split(
+            expense_id,
+            paid_by,
+            "even",
+            participants,
+            amount
+        )
+
+        if not update_result.get("success"):
+            return f"Error updating split: {update_result.get('error')}"
+
+        # Calculate settlements
+        immediate = self.settlement_service.calculate_immediate_settlement(
+            amount, paid_by, split_amounts
+        )
+
+        running = await self.settlement_service.calculate_running_balance(trip_id)
+
+        # Clear conversation state
+        await self.trip_service.clear_conversation_state(user_id)
+
+        return f"""✅ Expense added!
+
+💰 ${amount:.2f} - {description}
+👤 Paid by: {paid_by}
+
+📊 Immediate settlement (this expense):
+{immediate}
+
+📈 Running balance (all trip expenses):
+{running}
+
+Use /balance to see running balance anytime."""

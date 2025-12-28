@@ -60,7 +60,7 @@ def initialize_services():
         settlement_service = SettlementService(expense_service)
 
         # Initialize handlers
-        command_handler = CommandHandler(trip_service, expense_service, settlement_service)
+        command_handler = CommandHandler(trip_service, expense_service, settlement_service, telegram_utils)
         file_handler = FileHandler(gemini, trip_service, expense_service,
                                    settlement_service, telegram_utils, supabase)
         message_handler = MessageHandler(gemini, trip_service, supabase)
@@ -165,6 +165,12 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_participants_response(user_id, text)
             elif text.startswith('/new_trip'):
                 response = await command_handler.handle_new_trip(user_id, text)
+            elif text.startswith('/add_expense'):
+                result = await command_handler.handle_add_expense(user_id, chat_id, text)
+                if result.get("response"):
+                    await telegram_utils.send_message(chat_id, result["response"])
+                # If keyboard was sent, message already sent in handler
+                return
             elif text.startswith('/list_trips'):
                 response = await command_handler.handle_list_trips(user_id)
             elif text.startswith('/current_trip'):
@@ -219,8 +225,16 @@ class handler(BaseHTTPRequestHandler):
                 response_dict = await file_handler.handle_paid_by_callback(
                     callback_data, chat_id
                 )
+            elif callback_data.startswith("expense_paid_by:"):
+                # Manual expense - extract payer name
+                paid_by = callback_data.replace("expense_paid_by:", "")
+                response = await command_handler.handle_expense_payer_callback(
+                    user_id, chat_id, paid_by
+                )
+                if response:
+                    await telegram_utils.send_message(chat_id, response)
 
-            # Send response if provided
+            # Send response if provided (for dict responses)
             if response_dict and response_dict.get("response"):
                 await telegram_utils.send_message(chat_id, response_dict["response"])
 

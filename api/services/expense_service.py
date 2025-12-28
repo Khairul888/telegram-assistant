@@ -10,6 +10,54 @@ class ExpenseService:
         """Initialize with Supabase client."""
         self.supabase = supabase_client
 
+    async def create_expense(self, user_id: str, trip_id: int,
+                            merchant_name: str, total_amount: float,
+                            paid_by: str = None, split_between: List[str] = None,
+                            transaction_date: str = None, category: str = "other") -> Dict:
+        """
+        Create a general expense record (for manual entry).
+
+        Args:
+            user_id: Telegram user ID
+            trip_id: Trip ID to associate expense with
+            merchant_name: Description of the expense
+            total_amount: Total expense amount
+            paid_by: Name of person who paid (optional)
+            split_between: List of participant names (optional)
+            transaction_date: Date in YYYY-MM-DD format (optional)
+            category: Expense category (optional)
+
+        Returns:
+            dict: {"success": bool, "expense_id": int, "expense": dict} or error
+        """
+        try:
+            expense_data = {
+                "user_id": user_id,
+                "trip_id": trip_id,
+                "merchant_name": merchant_name,
+                "total_amount": float(total_amount),
+                "category": category,
+                "transaction_date": transaction_date,
+                "currency": "USD",
+                "paid_by": paid_by,
+                "split_between": split_between
+            }
+
+            result = self.supabase.table('expenses').insert(expense_data).execute()
+
+            if not result.data:
+                return {"success": False, "error": "Failed to create expense"}
+
+            expense_id = result.data[0]['id']
+
+            return {
+                "success": True,
+                "expense_id": expense_id,
+                "expense": result.data[0]
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     async def create_expense_from_receipt(self, user_id: str, trip_id: int,
                                          receipt_data: Dict) -> Dict:
         """
