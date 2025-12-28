@@ -309,7 +309,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
     async def process_pdf(self, pdf_data: bytes, document_type: str = None) -> dict:
         """
-        Process PDF document using Gemini.
+        Process PDF document using Gemini with inline data.
 
         Args:
             pdf_data: PDF file bytes
@@ -331,23 +331,19 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
             if len(pdf_data) < 100:
                 return {"success": False, "error": f"PDF data too small: {len(pdf_data)} bytes"}
 
-            # Upload PDF to Gemini
-            import tempfile
-            import os
+            # Encode PDF to base64 for inline data
+            import base64
+            pdf_base64 = base64.b64encode(pdf_data).decode('utf-8')
 
-            # Create temporary file for PDF
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
-                tmp_file.write(pdf_data)
-                tmp_path = tmp_file.name
+            # Create inline data part for Gemini
+            pdf_part = {
+                "mime_type": "application/pdf",
+                "data": pdf_base64
+            }
 
-            try:
-                # Upload file to Gemini
-                uploaded_file = genai.upload_file(tmp_path)
-                print(f"PDF uploaded to Gemini: {uploaded_file.name}")
-
-                # Classify document type if not provided
-                if not document_type:
-                    classification_prompt = """Look at this PDF and classify it as one of these document types:
+            # Classify document type if not provided
+            if not document_type:
+                classification_prompt = """Look at this PDF and classify it as one of these document types:
 - flight_ticket: Airline boarding passes, flight confirmations, e-tickets
 - receipt: Restaurant bills, shopping receipts, purchase invoices
 - hotel_booking: Hotel confirmations, accommodation bookings
@@ -356,46 +352,41 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
 Return only the classification type, nothing else."""
 
-                    response = self.model.generate_content([classification_prompt, uploaded_file])
-                    classification = response.text.strip().lower() if response.text else "other_document"
+                response = self.model.generate_content([classification_prompt, pdf_part])
+                classification = response.text.strip().lower() if response.text else "other_document"
 
-                    # Validate classification
-                    valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
-                    if classification not in valid_types:
-                        classification = "other_document"
+                # Validate classification
+                valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
+                if classification not in valid_types:
+                    classification = "other_document"
 
-                    document_type = classification
+                document_type = classification
 
-                # Extract data based on document type
-                if document_type == "flight_ticket":
-                    result = await self._extract_flight_from_pdf(uploaded_file)
-                elif document_type == "receipt":
-                    result = await self._extract_receipt_from_pdf(uploaded_file)
-                elif document_type == "hotel_booking":
-                    result = await self._extract_hotel_from_pdf(uploaded_file)
-                else:
-                    # Generic document
-                    result = {
-                        "success": True,
-                        "data": {},
-                        "confidence": 0.5
-                    }
+            # Extract data based on document type
+            if document_type == "flight_ticket":
+                result = await self._extract_flight_from_pdf(pdf_part)
+            elif document_type == "receipt":
+                result = await self._extract_receipt_from_pdf(pdf_part)
+            elif document_type == "hotel_booking":
+                result = await self._extract_hotel_from_pdf(pdf_part)
+            else:
+                # Generic document
+                result = {
+                    "success": True,
+                    "data": {},
+                    "confidence": 0.5
+                }
 
-                # Add document_type to result
-                if result.get("success"):
-                    result["document_type"] = document_type
+            # Add document_type to result
+            if result.get("success"):
+                result["document_type"] = document_type
 
-                return result
-
-            finally:
-                # Clean up temp file
-                if os.path.exists(tmp_path):
-                    os.remove(tmp_path)
+            return result
 
         except Exception as e:
             return {"success": False, "error": f"PDF processing error: {str(e)}"}
 
-    async def _extract_flight_from_pdf(self, uploaded_file) -> dict:
+    async def _extract_flight_from_pdf(self, pdf_part) -> dict:
         """Extract flight details from PDF using Gemini."""
         try:
             flight_prompt = """Analyze this flight ticket/e-ticket PDF and extract the following information.
@@ -419,7 +410,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "class": "travel class"
 }"""
 
-            response = self.model.generate_content([flight_prompt, uploaded_file])
+            response = self.model.generate_content([flight_prompt, pdf_part])
 
             if response.text:
                 try:
@@ -441,7 +432,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
         except Exception as e:
             return {"success": False, "error": f"Flight extraction error: {str(e)}"}
 
-    async def _extract_receipt_from_pdf(self, uploaded_file) -> dict:
+    async def _extract_receipt_from_pdf(self, pdf_part) -> dict:
         """Extract receipt details from PDF using Gemini."""
         try:
             receipt_prompt = """Analyze this receipt PDF and extract the following information.
@@ -464,7 +455,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "payment_method": "cash|card|digital"
 }"""
 
-            response = self.model.generate_content([receipt_prompt, uploaded_file])
+            response = self.model.generate_content([receipt_prompt, pdf_part])
 
             if response.text:
                 try:
@@ -486,7 +477,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
         except Exception as e:
             return {"success": False, "error": f"Receipt extraction error: {str(e)}"}
 
-    async def _extract_hotel_from_pdf(self, uploaded_file) -> dict:
+    async def _extract_hotel_from_pdf(self, pdf_part) -> dict:
         """Extract hotel booking details from PDF using Gemini."""
         try:
             hotel_prompt = """Analyze this hotel booking confirmation PDF and extract the following information.
@@ -508,7 +499,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "guest_name": "guest name"
 }"""
 
-            response = self.model.generate_content([hotel_prompt, uploaded_file])
+            response = self.model.generate_content([hotel_prompt, pdf_part])
 
             if response.text:
                 try:
