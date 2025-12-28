@@ -82,8 +82,8 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         response = {
             "status": "ok",
-            "version": "MVP 1.0",
-            "features": ["trip management", "expense tracking", "Q&A"]
+            "version": "MVP 1.1",
+            "features": ["trip management", "expense tracking", "Q&A", "enhanced splits"]
         }
         self.wfile.write(json.dumps(response).encode())
 
