@@ -29,6 +29,43 @@ class GeminiService:
             self.available = False
             print("Warning: google-generativeai package not available")
 
+    def _validate_and_open_image(self, image_data: bytes):
+        """
+        Validate and open image data with PIL.
+
+        Args:
+            image_data: Image bytes
+
+        Returns:
+            PIL.Image: Opened image
+
+        Raises:
+            ValueError: If image data is invalid
+        """
+        if not image_data:
+            raise ValueError("Empty image data received")
+
+        if len(image_data) < 100:
+            raise ValueError(f"Image data too small: {len(image_data)} bytes")
+
+        print(f"Processing image: {len(image_data)} bytes")
+
+        # Create BytesIO and open image
+        image_buffer = io.BytesIO(image_data)
+
+        try:
+            image = Image.open(image_buffer)
+            image.verify()  # Verify it's a valid image
+
+            # Reopen after verify (verify closes the file)
+            image_buffer.seek(0)
+            image = Image.open(image_buffer)
+
+            print(f"Image opened successfully: {image.format} {image.size}")
+            return image
+        except Exception as img_error:
+            raise ValueError(f"Invalid image format: {str(img_error)}. Received {len(image_data)} bytes.")
+
     async def generate_response(self, prompt: str, system_instruction: str = None) -> str:
         """
         Generate AI text response with optional system instruction.
@@ -67,7 +104,8 @@ class GeminiService:
             return {"success": False, "error": "AI service not available"}
 
         try:
-            image = Image.open(io.BytesIO(image_data))
+            # Validate and open image
+            image = self._validate_and_open_image(image_data)
 
             classification_prompt = """Look at this image and classify it as one of these document types:
 - flight_ticket: Airline boarding passes, flight confirmations, e-tickets
@@ -109,7 +147,7 @@ Return only the classification type, nothing else."""
             return {"success": False, "error": "AI service not available"}
 
         try:
-            image = Image.open(io.BytesIO(image_data))
+            image = self._validate_and_open_image(image_data)
 
             flight_prompt = """Analyze this flight ticket/boarding pass image and extract the following information.
 Return ONLY a valid JSON object with these fields (use null for missing information):
@@ -168,7 +206,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
             return {"success": False, "error": "AI service not available"}
 
         try:
-            image = Image.open(io.BytesIO(image_data))
+            image = self._validate_and_open_image(image_data)
 
             receipt_prompt = """Analyze this receipt image and extract the following information.
 Return ONLY a valid JSON object with these fields (use null for missing information):
@@ -226,7 +264,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
             return {"success": False, "error": "AI service not available"}
 
         try:
-            image = Image.open(io.BytesIO(image_data))
+            image = self._validate_and_open_image(image_data)
 
             hotel_prompt = """Analyze this hotel booking confirmation and extract the following information.
 Return ONLY a valid JSON object with these fields (use null for missing information):
