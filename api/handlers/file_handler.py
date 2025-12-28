@@ -153,48 +153,75 @@ How should this be split among:
 
     async def _handle_flight(self, user_id: str, trip: dict,
                             flight_data: dict, file_name: str) -> Dict:
-        """Handle flight ticket upload."""
+        """Handle flight ticket upload (supports multiple flights for round-trip/multi-city)."""
         try:
-            # Store in travel_events table
-            event_data = {
-                "user_id": user_id,
-                "trip_id": trip['id'],
-                "event_type": "flight",
-                "airline": flight_data.get("airline"),
-                "flight_number": flight_data.get("flight_number"),
-                "departure_city": flight_data.get("departure_city"),
-                "departure_airport": flight_data.get("departure_airport"),
-                "arrival_city": flight_data.get("arrival_city"),
-                "arrival_airport": flight_data.get("arrival_airport"),
-                "departure_time": f"{flight_data.get('departure_date')} {flight_data.get('departure_time')}" if flight_data.get('departure_date') else None,
-                "arrival_time": f"{flight_data.get('arrival_date')} {flight_data.get('arrival_time')}" if flight_data.get('arrival_date') else None,
-                "gate": flight_data.get("gate"),
-                "seat": flight_data.get("seat"),
-                "booking_reference": flight_data.get("booking_reference"),
-                "passenger_name": flight_data.get("passenger_name"),
-                "raw_extracted_data": flight_data
-            }
+            # Check if flight_data contains multiple flights (new format)
+            flights = flight_data.get("flights", [])
 
-            self.supabase.table('travel_events').insert(event_data).execute()
+            # If no flights array, treat flight_data itself as a single flight (backwards compatibility)
+            if not flights:
+                flights = [flight_data]
+
+            saved_flights = []
+
+            # Insert each flight as a separate travel_event
+            for flight in flights:
+                event_data = {
+                    "user_id": user_id,
+                    "trip_id": trip['id'],
+                    "event_type": "flight",
+                    "airline": flight.get("airline"),
+                    "flight_number": flight.get("flight_number"),
+                    "departure_city": flight.get("departure_city"),
+                    "departure_airport": flight.get("departure_airport"),
+                    "arrival_city": flight.get("arrival_city"),
+                    "arrival_airport": flight.get("arrival_airport"),
+                    "departure_time": f"{flight.get('departure_date')} {flight.get('departure_time')}" if flight.get('departure_date') else None,
+                    "arrival_time": f"{flight.get('arrival_date')} {flight.get('arrival_time')}" if flight.get('arrival_date') else None,
+                    "gate": flight.get("gate"),
+                    "seat": flight.get("seat"),
+                    "booking_reference": flight.get("booking_reference"),
+                    "passenger_name": flight.get("passenger_name"),
+                    "raw_extracted_data": flight
+                }
+
+                self.supabase.table('travel_events').insert(event_data).execute()
+                saved_flights.append(flight)
 
             # Update trip activity
             await self.trip_service.update_trip_activity(trip['id'])
 
-            airline = flight_data.get("airline", "Unknown airline")
-            flight_num = flight_data.get("flight_number", "")
-            dep_city = flight_data.get("departure_city", "Unknown")
-            arr_city = flight_data.get("arrival_city", "Unknown")
-            dep_time = flight_data.get("departure_time", "")
+            # Build response message
+            if len(saved_flights) == 1:
+                # Single flight
+                flight = saved_flights[0]
+                response_msg = f"""✅ Flight saved for {trip['trip_name']}!
+
+✈️ {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}
+📍 {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}
+🕐 Departure: {flight.get('departure_date', '')} {flight.get('departure_time', '')}
+💺 Seat: {flight.get('seat', 'N/A')}
+
+Ask me "when's my flight?" anytime!"""
+            else:
+                # Multiple flights (round-trip or multi-city)
+                flight_summaries = []
+                for idx, flight in enumerate(saved_flights, 1):
+                    label = "Outbound" if idx == 1 else ("Return" if idx == 2 and len(saved_flights) == 2 else f"Flight {idx}")
+                    flight_summaries.append(
+                        f"{label}: {flight.get('departure_city', 'Unknown')} → {flight.get('arrival_city', 'Unknown')}\n"
+                        f"   {flight.get('airline', 'Unknown')} {flight.get('flight_number', '')}\n"
+                        f"   {flight.get('departure_date', '')} {flight.get('departure_time', '')}"
+                    )
+
+                response_msg = f"""✅ {len(saved_flights)} flights saved for {trip['trip_name']}!
+
+{chr(10).join(flight_summaries)}
+
+Ask me "when's my flight?" anytime!"""
 
             return {
-                "response": f"""✅ Flight saved for {trip['trip_name']}!
-
-✈️ {airline} {flight_num}
-📍 {dep_city} → {arr_city}
-🕐 Departure: {dep_time}
-💺 Seat: {flight_data.get('seat', 'N/A')}
-
-Ask me "when's my flight?" anytime!""",
+                "response": response_msg,
                 "keyboard": None
             }
         except Exception as e:

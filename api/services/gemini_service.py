@@ -458,7 +458,7 @@ Return only the classification type, nothing else."""
             return {"success": False, "error": f"PDF processing error: {str(e)}"}
 
     async def _extract_flight_from_pdf(self, uploaded_file) -> dict:
-        """Extract flight details from PDF using Gemini."""
+        """Extract ALL flight details from PDF using Gemini (including return flights)."""
         try:
             flight_prompt = """You are a precise data extraction expert. Carefully read ALL PAGES of this flight document (boarding pass, e-ticket, or flight confirmation).
 
@@ -466,31 +466,41 @@ INSTRUCTIONS:
 1. Extract EXACT text as it appears - do not paraphrase or abbreviate
 2. For dates, convert to YYYY-MM-DD format
 3. For times, use 24-hour HH:MM format
-4. Look for multiple representations of the same data and use the most complete one
-5. If you find multiple flights (like round trip), extract information for the FIRST/OUTBOUND flight only
+4. IMPORTANT: If this is a ROUND-TRIP ticket, extract BOTH the outbound AND return flights
+5. For multi-city trips, extract ALL flight segments
 6. Check header, footer, and all sections of ALL pages
+7. Each flight should be a separate object in the flights array
 
-Extract the following information and return ONLY a valid JSON object (no markdown, no explanation):
+Extract ALL flights and return ONLY a valid JSON object (no markdown, no explanation):
 
 {
-    "airline": "full airline name exactly as shown",
-    "flight_number": "flight code with letters and numbers (e.g., AA123, DL4567)",
-    "departure_city": "full departure city name",
-    "departure_airport": "3-letter IATA code (e.g., LAX, JFK)",
-    "arrival_city": "full arrival city name",
-    "arrival_airport": "3-letter IATA code",
-    "departure_date": "YYYY-MM-DD format",
-    "departure_time": "HH:MM in 24-hour format",
-    "arrival_date": "YYYY-MM-DD format",
-    "arrival_time": "HH:MM in 24-hour format",
-    "gate": "gate number/letter if available",
-    "seat": "seat assignment (e.g., 12A, 23F)",
-    "booking_reference": "PNR/confirmation code (usually 6 characters)",
-    "passenger_name": "passenger full name",
-    "class": "cabin class (Economy, Business, First, etc.)"
+    "flights": [
+        {
+            "airline": "full airline name exactly as shown",
+            "flight_number": "flight code with letters and numbers (e.g., AA123, DL4567)",
+            "departure_city": "full departure city name",
+            "departure_airport": "3-letter IATA code (e.g., LAX, JFK)",
+            "arrival_city": "full arrival city name",
+            "arrival_airport": "3-letter IATA code",
+            "departure_date": "YYYY-MM-DD format",
+            "departure_time": "HH:MM in 24-hour format",
+            "arrival_date": "YYYY-MM-DD format",
+            "arrival_time": "HH:MM in 24-hour format",
+            "gate": "gate number/letter if available",
+            "seat": "seat assignment (e.g., 12A, 23F)",
+            "booking_reference": "PNR/confirmation code (usually 6 characters)",
+            "passenger_name": "passenger full name",
+            "class": "cabin class (Economy, Business, First, etc.)"
+        }
+    ]
 }
 
-Use null for any field not found in the document."""
+CRITICAL:
+- For one-way tickets: flights array will have 1 object
+- For round-trip tickets: flights array will have 2 objects (outbound first, return second)
+- For multi-city: flights array will have multiple objects in chronological order
+- Use null for any field not found in the document
+- Booking reference is usually the SAME for all flights on the same reservation"""
 
             response = self.model.generate_content([uploaded_file, flight_prompt])
 
