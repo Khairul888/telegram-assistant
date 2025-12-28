@@ -163,6 +163,8 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_location_response(user_id, text)
             elif state == 'awaiting_participants':
                 response = await command_handler.handle_participants_response(user_id, text)
+            elif state == 'awaiting_custom_split':
+                response = await command_handler.handle_custom_split_text(user_id, chat_id, text)
             elif text.startswith('/new_trip'):
                 response = await command_handler.handle_new_trip(user_id, text)
             elif text.startswith('/add_expense'):
@@ -217,22 +219,46 @@ class handler(BaseHTTPRequestHandler):
             response_dict = None
 
             # Route based on callback data prefix
-            if callback_data.startswith("split_"):
-                response_dict = await file_handler.handle_split_callback(
-                    callback_data, user_id, chat_id
-                )
-            elif callback_data.startswith("paid_by:"):
-                response_dict = await file_handler.handle_paid_by_callback(
-                    callback_data, chat_id
-                )
+            if callback_data.startswith("receipt_paid_by:"):
+                # Receipt expense - extract expense_id and payer
+                parts = callback_data.split(":", 2)
+                if len(parts) == 3:
+                    expense_id = int(parts[1])
+                    paid_by = parts[2]
+                    response_dict = await file_handler.handle_receipt_paid_by_callback(
+                        user_id, chat_id, expense_id, paid_by
+                    )
             elif callback_data.startswith("expense_paid_by:"):
                 # Manual expense - extract payer name
                 paid_by = callback_data.replace("expense_paid_by:", "")
-                response = await command_handler.handle_expense_payer_callback(
+                response_dict = await command_handler.handle_expense_payer_callback(
                     user_id, chat_id, paid_by
                 )
-                if response:
-                    await telegram_utils.send_message(chat_id, response)
+            elif callback_data.startswith("participant_toggle:"):
+                # Participant multi-select toggle
+                parts = callback_data.split(":", 2)
+                if len(parts) == 3:
+                    expense_id = int(parts[1])
+                    participant = parts[2]
+                    message_id = callback_query["message"]["message_id"]
+                    response_dict = await command_handler.handle_participant_toggle_callback(
+                        user_id, chat_id, message_id, expense_id, participant
+                    )
+            elif callback_data.startswith("participants_done:"):
+                # Participant selection complete
+                expense_id = int(callback_data.split(":")[1])
+                response_dict = await command_handler.handle_participants_done_callback(
+                    user_id, chat_id, expense_id
+                )
+            elif callback_data.startswith("split_type:"):
+                # Split type selection
+                parts = callback_data.split(":", 2)
+                if len(parts) == 3:
+                    expense_id = int(parts[1]) if parts[1] != 'None' else None
+                    split_type = parts[2]
+                    response_dict = await command_handler.handle_split_type_callback(
+                        user_id, chat_id, expense_id, split_type
+                    )
 
             # Send response if provided (for dict responses)
             if response_dict and response_dict.get("response"):

@@ -394,9 +394,10 @@ Who paid? Reply with one of: {participants_list}""",
                 "keyboard": None
             }
 
-    async def handle_expense_payer_callback(self, user_id: str, chat_id: str, paid_by: str) -> str:
+    async def handle_expense_payer_callback(self, user_id: str, chat_id: str, paid_by: str) -> Dict:
         """
         Handle callback when user selects who paid for manual expense.
+        Now asks who is involved in the expense.
 
         Args:
             user_id: Telegram user ID
@@ -404,7 +405,7 @@ Who paid? Reply with one of: {participants_list}""",
             paid_by: Name of person who paid
 
         Returns:
-            str: Response message
+            dict: {response: str or None, keyboard: dict or None}
         """
         # Get session context
         session = await self.trip_service.get_or_update_session(user_id)
@@ -413,66 +414,410 @@ Who paid? Reply with one of: {participants_list}""",
         amount = context.get('expense_amount')
         description = context.get('expense_description')
         trip_id = context.get('trip_id')
+        expense_id = context.get('expense_id')
 
         if not all([amount, description, trip_id]):
-            return "Error: Expense session expired. Please start over with /add_expense"
+            return {"response": "Error: Expense session expired. Please start over with /add_expense", "keyboard": None}
 
         # Get trip to get participants
         trip = await self.trip_service.get_current_trip(user_id)
         if not trip:
-            return "Error: Trip not found"
+            return {"response": "Error: Trip not found", "keyboard": None}
 
         participants = trip.get('participants', [])
 
-        # Create expense
-        from datetime import datetime
-        result = await self.expense_service.create_expense(
-            user_id=user_id,
-            trip_id=trip_id,
-            merchant_name=description,
-            total_amount=amount,
-            paid_by=paid_by,
-            split_between=participants,
-            transaction_date=datetime.now().date().isoformat()
+        # Update session with paid_by and move to participant selection
+        context['paid_by'] = paid_by
+        context['participants_selected'] = []  # Track selected participants
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_expense_participants',
+            context=context
         )
 
-        if not result.get("success"):
-            return f"Error creating expense: {result.get('error')}"
+        # Create keyboard for participant selection (multi-select)
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": f"☐ {p}", "callback_data": f"participant_toggle:{expense_id}:{p}"}]
+                for p in participants
+            ] + [
+                [{"text": "✅ Done", "callback_data": f"participants_done:{expense_id}"}]
+            ]
+        }
 
-        expense_id = result['expense_id']
+        message = f"""💰 ${amount:.2f} - {description}
+👤 Paid by: {paid_by}
 
-        # Calculate split amounts (even split)
-        split_amounts = {}
-        per_person = amount / len(participants)
-        for participant in participants:
-            split_amounts[participant] = round(per_person, 2)
+Who is involved in this expense?
+Select all who should split this expense:"""
 
-        # Update expense with split
-        update_result = await self.expense_service.update_expense_split(
-            expense_id,
-            paid_by,
-            "even",
-            participants,
-            amount
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
+
+    async def handle_participant_toggle_callback(self, user_id: str, chat_id: str,
+                                                 message_id: int, expense_id: int,
+                                                 participant: str) -> Dict:
+        """
+        Handle participant selection toggle (multi-select).
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            message_id: Message ID to edit
+            expense_id: Expense ID
+            participant: Participant name to toggle
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+
+        participants_selected = context.get('participants_selected', [])
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+
+        # Toggle selection
+        if participant in participants_selected:
+            participants_selected.remove(participant)
+        else:
+            participants_selected.append(participant)
+
+        # Update session
+        context['participants_selected'] = participants_selected
+        await self.trip_service.get_or_update_session(user_id, context=context)
+
+        # Get trip for all participants
+        trip = await self.trip_service.get_current_trip(user_id)
+        all_participants = trip.get('participants', [])
+
+        # Rebuild keyboard with updated checkboxes
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": f"{'☑' if p in participants_selected else '☐'} {p}",
+                  "callback_data": f"participant_toggle:{expense_id}:{p}"}]
+                for p in all_participants
+            ] + [
+                [{"text": "✅ Done", "callback_data": f"participants_done:{expense_id}"}]
+            ]
+        }
+
+        message = f"""💰 ${amount:.2f} - {description}
+👤 Paid by: {paid_by}
+
+Who is involved in this expense?
+Select all who should split this expense:"""
+
+        # Edit message with updated keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.edit_message_keyboard(chat_id, message_id, message, keyboard)
+
+        return {"response": None, "keyboard": None}
+
+    async def handle_participants_done_callback(self, user_id: str, chat_id: str,
+                                                expense_id: int) -> Dict:
+        """
+        Handle completion of participant selection. Ask for split type.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            expense_id: Expense ID
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+
+        participants_selected = context.get('participants_selected', [])
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+
+        if not participants_selected:
+            return {"response": "Please select at least one participant.", "keyboard": None}
+
+        # Update state to split type selection
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_split_type',
+            context=context
         )
 
-        if not update_result.get("success"):
-            return f"Error updating split: {update_result.get('error')}"
+        # Create keyboard for split type selection
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "Equal Split", "callback_data": f"split_type:{expense_id}:equal"}],
+                [{"text": "Custom Percentage", "callback_data": f"split_type:{expense_id}:percent"}],
+                [{"text": "Custom Amounts", "callback_data": f"split_type:{expense_id}:amount"}]
+            ]
+        }
 
-        # Calculate settlements
-        immediate = self.settlement_service.calculate_immediate_settlement(
-            amount, paid_by, split_amounts
-        )
+        participants_str = ', '.join(participants_selected)
+        message = f"""💰 ${amount:.2f} - {description}
+👤 Paid by: {paid_by}
+👥 Split among: {participants_str}
 
-        running = await self.settlement_service.calculate_running_balance(trip_id)
+How should this be split?"""
 
-        # Clear conversation state
-        await self.trip_service.clear_conversation_state(user_id)
+        # Send message with keyboard
+        if self.telegram_utils:
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+            return {"response": None, "keyboard": None}
+        else:
+            return {"response": message, "keyboard": None}
 
-        return f"""✅ Expense added!
+    async def handle_split_type_callback(self, user_id: str, chat_id: str,
+                                        expense_id: int, split_type: str) -> Dict:
+        """
+        Handle split type selection.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            expense_id: Expense ID
+            split_type: 'equal', 'percent', or 'amount'
+
+        Returns:
+            dict: {response: str or None, keyboard: dict or None}
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+
+        participants_selected = context.get('participants_selected', [])
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+        trip_id = context.get('trip_id')
+
+        if split_type == 'equal':
+            # Equal split - complete immediately
+            from datetime import datetime
+
+            # Create or get expense
+            if not expense_id:
+                result = await self.expense_service.create_expense(
+                    user_id=user_id,
+                    trip_id=trip_id,
+                    merchant_name=description,
+                    total_amount=amount,
+                    paid_by=paid_by,
+                    split_between=participants_selected,
+                    transaction_date=datetime.now().date().isoformat()
+                )
+                if not result.get("success"):
+                    return {"response": f"Error creating expense: {result.get('error')}", "keyboard": None}
+                expense_id = result['expense_id']
+
+            # Update expense with even split
+            update_result = await self.expense_service.update_expense_split(
+                expense_id,
+                paid_by,
+                "even",
+                participants_selected,
+                amount
+            )
+
+            if not update_result.get("success"):
+                return {"response": f"Error updating split: {update_result.get('error')}", "keyboard": None}
+
+            # Calculate settlements
+            split_amounts = update_result['expense']['split_amounts']
+            immediate = self.settlement_service.calculate_immediate_settlement(
+                amount, paid_by, split_amounts
+            )
+            running = await self.settlement_service.calculate_running_balance(trip_id)
+
+            # Clear conversation state
+            await self.trip_service.clear_conversation_state(user_id)
+
+            return {"response": f"""✅ Expense added!
 
 💰 ${amount:.2f} - {description}
 👤 Paid by: {paid_by}
+👥 Split evenly among: {', '.join(participants_selected)}
+
+📊 Immediate settlement (this expense):
+{immediate}
+
+📈 Running balance (all trip expenses):
+{running}
+
+Use /balance to see running balance anytime.""", "keyboard": None}
+
+        elif split_type in ['percent', 'amount']:
+            # Custom split - ask for amounts/percentages
+            context['split_type'] = split_type
+            context['custom_splits'] = {}
+            context['current_participant_index'] = 0
+
+            await self.trip_service.get_or_update_session(
+                user_id,
+                state='awaiting_custom_split',
+                context=context
+            )
+
+            first_participant = participants_selected[0]
+            split_unit = "%" if split_type == 'percent' else "$"
+
+            return {"response": f"""Enter {first_participant}'s share as a number:
+
+Example: {50 if split_type == 'percent' else round(amount / len(participants_selected), 2)}
+
+(Total: ${amount:.2f})""", "keyboard": None}
+
+        return {"response": "Invalid split type", "keyboard": None}
+
+    async def handle_custom_split_text(self, user_id: str, chat_id: str, text: str) -> str:
+        """
+        Handle custom split amount/percentage text input.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            text: User input (number)
+
+        Returns:
+            str: Response message
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+
+        participants_selected = context.get('participants_selected', [])
+        split_type = context.get('split_type')
+        custom_splits = context.get('custom_splits', {})
+        current_index = context.get('current_participant_index', 0)
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+        trip_id = context.get('trip_id')
+        expense_id = context.get('expense_id')
+
+        # Parse input
+        try:
+            value = float(text.strip())
+            if value < 0:
+                return "Please enter a positive number."
+        except ValueError:
+            return "Invalid number. Please enter a valid amount."
+
+        # Store split for current participant
+        current_participant = participants_selected[current_index]
+        custom_splits[current_participant] = value
+
+        # Move to next participant
+        current_index += 1
+
+        if current_index < len(participants_selected):
+            # Ask for next participant
+            context['custom_splits'] = custom_splits
+            context['current_participant_index'] = current_index
+            await self.trip_service.get_or_update_session(user_id, context=context)
+
+            next_participant = participants_selected[current_index]
+            split_unit = "%" if split_type == 'percent' else "$"
+
+            # Show progress
+            if split_type == 'percent':
+                total_so_far = sum(custom_splits.values())
+                remaining = 100 - total_so_far
+                progress = f"\nSo far: {total_so_far}% assigned, {remaining}% remaining"
+            else:
+                total_so_far = sum(custom_splits.values())
+                remaining = amount - total_so_far
+                progress = f"\nSo far: ${total_so_far:.2f} assigned, ${remaining:.2f} remaining"
+
+            return f"""✅ {current_participant}: {value}{split_unit}{progress}
+
+Enter {next_participant}'s share:"""
+
+        else:
+            # All participants done - validate and complete
+            from datetime import datetime
+
+            # Validate splits
+            if split_type == 'percent':
+                total = sum(custom_splits.values())
+                if abs(total - 100) > 0.01:
+                    return f"Error: Percentages must add up to 100%. Current total: {total}%"
+
+                # Convert percentages to amounts
+                split_amounts = {
+                    p: round(amount * (pct / 100), 2)
+                    for p, pct in custom_splits.items()
+                }
+            else:
+                total = sum(custom_splits.values())
+                if abs(total - amount) > 0.01:
+                    return f"Error: Amounts must add up to ${amount:.2f}. Current total: ${total:.2f}"
+
+                split_amounts = custom_splits
+
+            # Create or get expense
+            if not expense_id:
+                result = await self.expense_service.create_expense(
+                    user_id=user_id,
+                    trip_id=trip_id,
+                    merchant_name=description,
+                    total_amount=amount,
+                    paid_by=paid_by,
+                    split_between=participants_selected,
+                    transaction_date=datetime.now().date().isoformat()
+                )
+                if not result.get("success"):
+                    return f"Error creating expense: {result.get('error')}"
+                expense_id = result['expense_id']
+
+            # Update expense with custom split
+            update_result = await self.expense_service.update_expense_split(
+                expense_id,
+                paid_by,
+                split_type,
+                participants_selected,
+                amount
+            )
+
+            if not update_result.get("success"):
+                return f"Error updating split: {update_result.get('error')}"
+
+            # Manually set split_amounts since update_expense_split doesn't handle custom yet
+            from api.utils.db_utils import get_supabase_client
+            supabase = get_supabase_client()
+            supabase.table('expenses').update({
+                'split_amounts': split_amounts
+            }).eq('id', expense_id).execute()
+
+            # Calculate settlements
+            immediate = self.settlement_service.calculate_immediate_settlement(
+                amount, paid_by, split_amounts
+            )
+            running = await self.settlement_service.calculate_running_balance(trip_id)
+
+            # Clear conversation state
+            await self.trip_service.clear_conversation_state(user_id)
+
+            # Format split details
+            split_details = '\n'.join([
+                f"  • {p}: ${amt:.2f}" for p, amt in split_amounts.items()
+            ])
+
+            return f"""✅ Expense added with custom split!
+
+💰 ${amount:.2f} - {description}
+👤 Paid by: {paid_by}
+
+Split breakdown:
+{split_details}
 
 📊 Immediate settlement (this expense):
 {immediate}

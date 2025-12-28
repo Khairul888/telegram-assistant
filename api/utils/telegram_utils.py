@@ -77,6 +77,37 @@ class TelegramUtils:
             print(f"Error sending message with keyboard: {e}")
             return False
 
+    async def edit_message_keyboard(self, chat_id: str, message_id: int, text: str, keyboard: dict):
+        """
+        Edit message text and inline keyboard.
+
+        Args:
+            chat_id: Telegram chat ID
+            message_id: Message ID to edit
+            text: New message text
+            keyboard: New inline keyboard markup dict
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            url = f"{self.base_url}/editMessageText"
+            data = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "reply_markup": json.dumps(keyboard)
+            }
+
+            data_encoded = urllib.parse.urlencode(data).encode('utf-8')
+            req = urllib.request.Request(url, data=data_encoded, method='POST')
+
+            with urllib.request.urlopen(req) as response:
+                return response.status == 200
+        except Exception as e:
+            print(f"Error editing message: {e}")
+            return False
+
     async def answer_callback_query(self, callback_query_id: str, text: str = ""):
         """
         Answer callback query to remove loading state.

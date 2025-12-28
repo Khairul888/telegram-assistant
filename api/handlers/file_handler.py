@@ -124,18 +124,26 @@ Create a trip first: /new_trip <trip name>""",
 
         expense_id = expense_result['expense_id']
 
-        # Create inline keyboard for split selection
+        # Store expense info in session for later use
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_receipt_payer',
+            context={
+                'expense_id': expense_id,
+                'expense_amount': total,
+                'expense_description': merchant,
+                'trip_id': trip['id']
+            }
+        )
+
+        # Create inline keyboard for "who paid?" selection
+        participants = trip.get('participants', [])
         keyboard = {
             "inline_keyboard": [
-                [
-                    {"text": "Split Evenly", "callback_data": f"split_even:{expense_id}"},
-                    {"text": "Custom Split", "callback_data": f"split_custom:{expense_id}"}
-                ]
+                [{"text": p, "callback_data": f"receipt_paid_by:{expense_id}:{p}"}]
+                for p in participants
             ]
         }
-
-        participants = trip.get('participants', [])
-        participants_str = ', '.join(participants) if isinstance(participants, list) else 'Unknown'
 
         message_text = f"""✅ Receipt extracted!
 
@@ -143,10 +151,9 @@ Create a trip first: /new_trip <trip name>""",
 💰 Total: ${total:.2f}
 📅 {date}
 
-How should this be split among:
-{participants_str}?"""
+Who paid for this?"""
 
-        # Send message with inline keyboard (don't return response, use telegram service)
+        # Send message with inline keyboard
         await self.telegram.send_message_with_keyboard(chat_id, message_text, keyboard)
 
         return {"response": None, "keyboard": None}  # Already sent
@@ -338,140 +345,61 @@ You can ask me questions about this document later.""",
                 "keyboard": None
             }
 
-    async def handle_split_callback(self, callback_data: str, user_id: str,
-                                   chat_id: str) -> Dict:
+    async def handle_receipt_paid_by_callback(self, user_id: str, chat_id: str,
+                                             expense_id: int, paid_by: str) -> Dict:
         """
-        Handle split type selection callback.
+        Handle receipt "who paid" selection. Now asks who is involved.
 
         Args:
-            callback_data: Callback data (e.g., "split_even:123")
             user_id: Telegram user ID
             chat_id: Telegram chat ID
+            expense_id: Expense ID
+            paid_by: Name of person who paid
 
         Returns:
             dict: {"response": str or None, "keyboard": dict or None}
         """
-        # Parse callback data: "split_even:123" or "split_custom:123"
-        parts = callback_data.split(':')
-        if len(parts) != 2:
-            return {"response": "Invalid callback data", "keyboard": None}
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
 
-        split_type = parts[0].replace('split_', '')
-        expense_id = int(parts[1])
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        trip_id = context.get('trip_id')
 
-        # Get expense and trip
-        expense = await self.expense_service.get_expense_by_id(expense_id)
-        if not expense:
-            return {"response": "❌ Expense not found", "keyboard": None}
-
+        # Get trip to get participants
         trip = await self.trip_service.get_current_trip(user_id)
         if not trip:
-            return {"response": "❌ No active trip", "keyboard": None}
+            return {"response": "Error: Trip not found", "keyboard": None}
 
-        if split_type == "even":
-            # Get trip participants and create keyboard for "who paid?"
-            participants = trip.get('participants', [])
-            if not isinstance(participants, list) or not participants:
-                return {"response": "❌ No participants in trip", "keyboard": None}
-
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": p, "callback_data": f"paid_by:{expense_id}:{p}"}]
-                    for p in participants
-                ]
-            }
-
-            message_text = "Who paid for this expense?"
-
-            # Send new message with keyboard
-            await self.telegram.send_message_with_keyboard(chat_id, message_text, keyboard)
-
-            return {"response": None, "keyboard": None}  # Already sent
-
-        elif split_type == "custom":
-            return {
-                "response": "Custom split not yet implemented. Please use 'Split Evenly' for now.",
-                "keyboard": None
-            }
-        else:
-            return {"response": "❌ Invalid split type", "keyboard": None}
-
-    async def handle_paid_by_callback(self, callback_data: str, chat_id: str) -> Dict:
-        """
-        Handle "who paid" selection callback.
-
-        Args:
-            callback_data: Callback data (e.g., "paid_by:123:Alice")
-            chat_id: Telegram chat ID
-
-        Returns:
-            dict: {"response": str, "keyboard": None}
-        """
-        # Parse: "paid_by:123:Alice"
-        parts = callback_data.split(':', 2)
-        if len(parts) != 3:
-            return {"response": "Invalid callback data", "keyboard": None}
-
-        expense_id = int(parts[1])
-        paid_by = parts[2]
-
-        # Get expense
-        expense = await self.expense_service.get_expense_by_id(expense_id)
-        if not expense:
-            return {"response": "❌ Expense not found", "keyboard": None}
-
-        trip_id = expense['trip_id']
-
-        # Get trip
-        trip_result = self.supabase.table('trips').select('*').eq('id', trip_id).execute()
-        if not trip_result.data:
-            return {"response": "❌ Trip not found", "keyboard": None}
-
-        trip = trip_result.data[0]
         participants = trip.get('participants', [])
 
-        # Update expense with split info
-        result = await self.expense_service.update_expense_split(
-            expense_id,
-            paid_by,
-            "even",
-            participants,
-            expense['total_amount']
+        # Update session with paid_by and move to participant selection
+        context['paid_by'] = paid_by
+        context['participants_selected'] = []
+        await self.trip_service.get_or_update_session(
+            user_id,
+            state='awaiting_expense_participants',
+            context=context
         )
 
-        if not result.get("success"):
-            return {
-                "response": f"❌ Error updating split: {result.get('error')}",
-                "keyboard": None
-            }
+        # Create keyboard for participant selection (multi-select)
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": f"☐ {p}", "callback_data": f"participant_toggle:{expense_id}:{p}"}]
+                for p in participants
+            ] + [
+                [{"text": "✅ Done", "callback_data": f"participants_done:{expense_id}"}]
+            ]
+        }
 
-        updated_expense = result['expense']
-
-        # Calculate immediate settlement
-        immediate = self.settlement.calculate_immediate_settlement(
-            updated_expense['total_amount'],
-            paid_by,
-            updated_expense['split_amounts']
-        )
-
-        # Calculate running balance
-        running = await self.settlement.calculate_running_balance(trip_id)
-
-        # Update trip activity
-        await self.trip_service.update_trip_activity(trip_id)
-
-        return {
-            "response": f"""✅ Expense split recorded!
-
-💰 ${updated_expense['total_amount']:.2f} at {updated_expense['merchant_name']}
+        message = f"""💰 ${amount:.2f} - {description}
 👤 Paid by: {paid_by}
 
-📊 IMMEDIATE SETTLEMENT (this expense):
-{immediate}
+Who is involved in this expense?
+Select all who should split this expense:"""
 
-📈 RUNNING BALANCE (all trip expenses):
-{running}
+        # Send message with keyboard
+        await self.telegram.send_message_with_keyboard(chat_id, message, keyboard)
 
-Use /balance to see running balance anytime.""",
-            "keyboard": None
-        }
+        return {"response": None, "keyboard": None}
