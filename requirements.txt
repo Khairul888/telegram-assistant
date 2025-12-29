@@ -7,9 +7,6 @@ google-generativeai>=0.8.0
 # Database (Supabase PostgreSQL)
 supabase==2.1.0
 
-# HTTP client for async API requests (Google Places API)
-httpx==0.27.0
-
 # Configuration management
 python-dotenv==1.0.0
 
