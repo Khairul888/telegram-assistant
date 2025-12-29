@@ -48,7 +48,7 @@ Use the following information to answer questions:
 
 {context}
 
-Answer the user's question based on this trip information. If you don't have the information, say so clearly."""
+Answer the user's question based on this trip information. If you don't have the information, say so clearly. Use plain text without bold formatting."""
 
         # Determine if web search is needed
         needs_search = await self._should_use_web_search(question_text)

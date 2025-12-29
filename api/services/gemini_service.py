@@ -160,7 +160,7 @@ class GeminiService:
 - itinerary: Travel schedules, trip plans, tour bookings
 - other_document: Any other travel-related document
 
-Return only the classification type, nothing else."""
+Return only the classification type, nothing else. Do not use bold formatting or include reasoning."""
 
             response = self.model.generate_content([classification_prompt, image])
 
@@ -214,7 +214,9 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "booking_reference": "confirmation code",
     "passenger_name": "passenger name",
     "class": "travel class"
-}"""
+}
+
+Do not use bold formatting or include reasoning."""
 
             response = self.model.generate_content([flight_prompt, image])
 
@@ -272,7 +274,9 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "currency": "USD",
     "category": "food|transport|accommodation|entertainment|shopping",
     "payment_method": "cash|card|digital"
-}"""
+}
+
+Do not use bold formatting or include reasoning."""
 
             response = self.model.generate_content([receipt_prompt, image])
 
@@ -329,7 +333,9 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "total_cost": 0.00,
     "currency": "USD",
     "guest_name": "guest name"
-}"""
+}
+
+Do not use bold formatting or include reasoning."""
 
             response = self.model.generate_content([hotel_prompt, image])
 
@@ -409,7 +415,7 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 - itinerary: Travel schedules, trip plans, tour bookings
 - other_document: Any other travel-related document
 
-Return only the classification type, nothing else."""
+Return only the classification type, nothing else. Do not use bold formatting or include reasoning."""
 
                     response = self.model.generate_content([uploaded_file, classification_prompt])
                     classification = response.text.strip().lower() if response.text else "other_document"
@@ -502,7 +508,8 @@ CRITICAL:
 - For round-trip tickets: flights array will have 2 objects (outbound first, return second)
 - For multi-city: flights array will have multiple objects in chronological order
 - Use null for any field not found in the document
-- Booking reference is usually the SAME for all flights on the same reservation"""
+- Booking reference is usually the SAME for all flights on the same reservation
+- Do not use bold formatting or include reasoning"""
 
             response = self.model.generate_content([uploaded_file, flight_prompt])
 
@@ -564,7 +571,8 @@ Extract the following and return ONLY a valid JSON object (no markdown, no expla
 IMPORTANT:
 - If items list is long, include ALL items
 - Ensure subtotal + tax + tip = total (approximately)
-- Use null only if field truly doesn't exist"""
+- Use null only if field truly doesn't exist
+- Do not use bold formatting or include reasoning"""
 
             response = self.model.generate_content([uploaded_file, receipt_prompt])
 
@@ -624,7 +632,8 @@ Extract the following and return ONLY a valid JSON object (no markdown, no expla
 IMPORTANT:
 - Nights = check_out_date minus check_in_date
 - Look for total amount carefully - might be labeled as "Total Charges", "Amount Due", "Grand Total"
-- Use null only if field truly doesn't exist"""
+- Use null only if field truly doesn't exist
+- Do not use bold formatting or include reasoning"""
 
             response = self.model.generate_content([uploaded_file, hotel_prompt])
 
@@ -722,7 +731,7 @@ Categories:
 3. question - User is asking a question
 4. other - Anything else
 
-Respond with ONLY the category name, nothing else."""
+Respond with ONLY the category name, nothing else. Do not use bold formatting or include reasoning."""
 
             response = self.model.generate_content(prompt)
             intent = response.text.strip().lower()
@@ -796,6 +805,8 @@ Return JSON in this exact format:
     "summary": "Day 1: Morning visit to Tsukiji Market..."
 }}
 
+Do not use bold formatting or include reasoning.
+
 JSON:"""
 
             response = self.model.generate_content(prompt)
@@ -848,6 +859,8 @@ Return JSON in this exact format:
     "suggested_category": "restaurant",
     "notes": "Any context from user message"
 }}
+
+Do not use bold formatting or include reasoning.
 
 JSON:"""
 
