@@ -25,7 +25,7 @@ class TelegramUtils:
             text: Message text
 
         Returns:
-            bool: True if successful
+            dict: Message details including message_id, or {} on failure
         """
         try:
             url = f"{self.base_url}/sendMessage"
@@ -35,10 +35,11 @@ class TelegramUtils:
             req = urllib.request.Request(url, data=data_encoded, method='POST')
 
             with urllib.request.urlopen(req) as response:
-                return response.status == 200
+                result = json.loads(response.read().decode('utf-8'))
+                return result.get("result", {})
         except Exception as e:
             print(f"Error sending message: {e}")
-            return False
+            return {}
 
     async def send_message_with_keyboard(self, chat_id: str, text: str, keyboard: dict):
         """
@@ -106,6 +107,58 @@ class TelegramUtils:
                 return response.status == 200
         except Exception as e:
             print(f"Error editing message: {e}")
+            return False
+
+    async def edit_message_text(self, chat_id: str, message_id: int, text: str):
+        """
+        Edit message text only (without keyboard).
+
+        Args:
+            chat_id: Telegram chat ID
+            message_id: Message ID to edit
+            text: New message text
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            url = f"{self.base_url}/editMessageText"
+            data = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text
+            }
+
+            data_encoded = urllib.parse.urlencode(data).encode('utf-8')
+            req = urllib.request.Request(url, data=data_encoded, method='POST')
+
+            with urllib.request.urlopen(req) as response:
+                return response.status == 200
+        except Exception as e:
+            print(f"Error editing message text: {e}")
+            return False
+
+    async def delete_message(self, chat_id: str, message_id: int):
+        """
+        Delete a message.
+
+        Args:
+            chat_id: Telegram chat ID
+            message_id: Message ID to delete
+
+        Returns:
+            bool: True if successful
+        """
+        try:
+            url = f"{self.base_url}/deleteMessage"
+            data = {"chat_id": chat_id, "message_id": message_id}
+            data_encoded = urllib.parse.urlencode(data).encode('utf-8')
+            req = urllib.request.Request(url, data=data_encoded, method='POST')
+
+            with urllib.request.urlopen(req) as response:
+                return response.status == 200
+        except Exception as e:
+            print(f"Error deleting message: {e}")
             return False
 
     async def answer_callback_query(self, callback_query_id: str, text: str = ""):

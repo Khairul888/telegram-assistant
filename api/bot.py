@@ -39,6 +39,8 @@ command_handler = None
 file_handler = None
 message_handler = None
 intent_handler = None
+router = None
+agents_enabled = False
 
 
 def initialize_services():
@@ -46,6 +48,7 @@ def initialize_services():
     global _services_initialized, supabase, gemini, trip_service, expense_service
     global settlement_service, itinerary_service, places_service, telegram_utils
     global command_handler, file_handler, message_handler, intent_handler
+    global router, agents_enabled
 
     if _services_initialized:
         return
@@ -80,6 +83,36 @@ def initialize_services():
         from api.handlers.intent_handler import IntentHandler
         intent_handler = IntentHandler(gemini, itinerary_service, places_service,
                                       trip_service, telegram_utils)
+
+        # Initialize agents (feature-flag controlled)
+        agents_enabled = os.getenv('USE_AGENTIC_ROUTING', 'false').lower() == 'true'
+
+        if agents_enabled:
+            from api.agents.expense_agent import ExpenseAgent
+            from api.agents.router import KeywordRouter
+            from api.agents.orchestrator import OrchestratorAgent
+
+            services_dict = {
+                'trip': trip_service,
+                'expense': expense_service,
+                'settlement': settlement_service,
+                'itinerary': itinerary_service,
+                'places': places_service
+            }
+
+            # Initialize just ExpenseAgent for Phase 3 PoC
+            expense_agent = ExpenseAgent(gemini, services_dict, telegram_utils)
+
+            # Placeholder for other agents (Phase 4)
+            agents = {
+                'expense': expense_agent
+                # Other agents will be added in Phase 4
+            }
+
+            orchestrator = OrchestratorAgent(gemini, services_dict, telegram_utils)
+            router = KeywordRouter(agents, orchestrator)
+
+            print("Agents initialized (ExpenseAgent only)")
 
         _services_initialized = True
         print("Services initialized successfully")
@@ -219,36 +252,42 @@ class handler(BaseHTTPRequestHandler):
             elif text.startswith('/wishlist'):
                 response = await command_handler.handle_wishlist(user_id)
             else:
-                # Intent detection (only if no active state)
+                # Conversational handling (only if no active state)
                 if not state:
                     trip = await trip_service.get_current_trip(user_id)
                     if trip:
-                        # Classify message intent
-                        intent = await gemini.classify_message_intent(text)
-
-                        if intent == "google_maps_url":
-                            # Handle Google Maps URL
-                            result = await intent_handler.handle_google_maps_url(
-                                user_id, chat_id, text, trip
-                            )
-                            if result.get("handled"):
+                        # NEW: Agent-based routing (feature-flag controlled)
+                        if agents_enabled and router:
+                            result = await router.route(user_id, chat_id, text, trip)
+                            if result.get("success"):
                                 response = result.get("response")
-                        elif intent == "itinerary_paste":
-                            # Handle itinerary detection
-                            result = await intent_handler.handle_itinerary_detection(
-                                user_id, chat_id, text, trip
-                            )
-                            if result.get("handled"):
-                                # Response already sent with keyboard
-                                return
-                        elif intent == "place_mention":
-                            # Handle place mention
-                            result = await intent_handler.handle_place_detection(
-                                user_id, chat_id, text, trip
-                            )
-                            if result.get("handled"):
-                                # Response already sent with keyboard
-                                return
+                                # Check if already sent via streaming
+                                if response and not result.get("already_sent"):
+                                    await telegram_utils.send_message(chat_id, response)
+                                return  # Exit early, message handled
+
+                        # OLD: Keep original intent classification (backward compatibility)
+                        else:
+                            intent = await gemini.classify_message_intent(text)
+
+                            if intent == "google_maps_url":
+                                result = await intent_handler.handle_google_maps_url(
+                                    user_id, chat_id, text, trip
+                                )
+                                if result.get("handled"):
+                                    response = result.get("response")
+                            elif intent == "itinerary_paste":
+                                result = await intent_handler.handle_itinerary_detection(
+                                    user_id, chat_id, text, trip
+                                )
+                                if result.get("handled"):
+                                    return
+                            elif intent == "place_mention":
+                                result = await intent_handler.handle_place_detection(
+                                    user_id, chat_id, text, trip
+                                )
+                                if result.get("handled"):
+                                    return
 
                 # Fallback to Q&A if no intent matched or no trip
                 if not response:

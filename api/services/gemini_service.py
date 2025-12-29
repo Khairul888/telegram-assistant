@@ -948,3 +948,63 @@ JSON:"""
                     "search_queries": [],
                     "grounding_metadata": {}
                 }
+
+    async def call_function(self, prompt: str, tools: list,
+                           system_instruction: str = None) -> dict:
+        """
+        Call Gemini with native function calling.
+
+        Args:
+            prompt: User message
+            tools: List of function declarations
+            system_instruction: Optional context
+
+        Returns:
+            dict: {
+                "type": "function_call" | "text_response",
+                "function_name": str (if function_call),
+                "arguments": dict (if function_call),
+                "text": str (if text_response)
+            }
+        """
+        if not self.available:
+            return {"type": "text_response", "text": "AI service unavailable"}
+
+        try:
+            # Create model with tools
+            model = genai.GenerativeModel('gemini-2.0-flash-exp', tools=tools)
+
+            # Build prompt with system instruction
+            full_prompt = prompt
+            if system_instruction:
+                full_prompt = f"{system_instruction}\n\nUser: {prompt}"
+
+            # Generate
+            response = model.generate_content(full_prompt)
+
+            # Parse response
+            if response.candidates and response.candidates[0].content.parts:
+                part = response.candidates[0].content.parts[0]
+
+                # Function call
+                if hasattr(part, 'function_call'):
+                    function_call = part.function_call
+                    return {
+                        "type": "function_call",
+                        "function_name": function_call.name,
+                        "arguments": dict(function_call.args)
+                    }
+
+                # Text response
+                if hasattr(part, 'text'):
+                    return {"type": "text_response", "text": part.text}
+
+            # Fallback
+            return {
+                "type": "text_response",
+                "text": response.text if response.text else "No response"
+            }
+
+        except Exception as e:
+            print(f"Error in function calling: {e}")
+            return {"type": "text_response", "text": f"Error: {str(e)}"}
