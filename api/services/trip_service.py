@@ -10,13 +10,15 @@ class TripService:
         """Initialize with Supabase client."""
         self.supabase = supabase_client
 
-    async def create_trip(self, user_id: str, trip_name: str, location: str,
-                         participants: List[str]) -> Dict:
+    async def create_trip(self, user_id: str, chat_id: str, chat_type: str,
+                         trip_name: str, location: str, participants: List[str]) -> Dict:
         """
-        Create a new trip and set as current trip for user.
+        Create a new trip and set as current trip for user in this chat.
 
         Args:
-            user_id: Telegram user ID
+            user_id: Telegram user ID (creator)
+            chat_id: Telegram chat ID (group ID for groups, user ID for DMs)
+            chat_type: Chat type ('private', 'group', or 'supergroup')
             trip_name: Name of the trip (e.g., "Tokyo 2025")
             location: Trip destination (e.g., "Tokyo, Japan")
             participants: List of participant names (e.g., ["Alice", "Bob"])
@@ -26,7 +28,9 @@ class TripService:
         """
         try:
             trip_data = {
-                "user_id": user_id,
+                "user_id": user_id,           # Creator (audit trail)
+                "chat_id": chat_id,           # Ownership scope (group or DM)
+                "chat_type": chat_type,       # Chat type
                 "trip_name": trip_name,
                 "location": location,
                 "participants": participants,  # JSONB array
@@ -42,8 +46,8 @@ class TripService:
 
             trip_id = result.data[0]['id']
 
-            # Set as current trip in user session
-            await self._set_current_trip(user_id, trip_id)
+            # Set as current trip in user session for this chat
+            await self._set_current_trip(user_id, chat_id, trip_id)
 
             return {
                 "success": True,
@@ -53,22 +57,24 @@ class TripService:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    async def get_current_trip(self, user_id: str) -> Optional[Dict]:
+    async def get_current_trip(self, user_id: str, chat_id: str) -> Optional[Dict]:
         """
-        Get user's current active trip.
+        Get user's current active trip for this chat.
         Auto-selects latest active trip if no current trip is set.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
 
         Returns:
             dict: Trip data or None if no trips exist
         """
         try:
-            # Check user session first
+            # Check user session for this chat
             session_result = self.supabase.table('user_sessions')\
                 .select('current_trip_id')\
                 .eq('user_id', user_id)\
+                .eq('chat_id', chat_id)\
                 .execute()
 
             # If session exists and has current_trip_id
@@ -76,19 +82,20 @@ class TripService:
                 current_trip_id = session_result.data[0].get('current_trip_id')
 
                 if current_trip_id:
-                    # Get the trip
+                    # Get the trip and verify it belongs to this chat
                     trip_result = self.supabase.table('trips')\
                         .select('*')\
                         .eq('id', current_trip_id)\
+                        .eq('chat_id', chat_id)\
                         .execute()
 
                     if trip_result.data and len(trip_result.data) > 0:
                         return trip_result.data[0]
 
-            # Fallback: get latest active trip (auto-use)
+            # Fallback: get latest active trip FOR THIS CHAT (auto-use)
             result = self.supabase.table('trips')\
                 .select('*')\
-                .eq('user_id', user_id)\
+                .eq('chat_id', chat_id)\
                 .eq('status', 'active')\
                 .order('last_activity_at', desc=True)\
                 .limit(1)\
@@ -96,8 +103,8 @@ class TripService:
 
             if result.data and len(result.data) > 0:
                 trip = result.data[0]
-                # Set as current trip
-                await self._set_current_trip(user_id, trip['id'])
+                # Set as current trip for this user in this chat
+                await self._set_current_trip(user_id, chat_id, trip['id'])
                 return trip
 
             return None
@@ -105,12 +112,13 @@ class TripService:
             print(f"Error getting current trip: {e}")
             return None
 
-    async def list_trips(self, user_id: str) -> List[Dict]:
+    async def list_trips(self, user_id: str, chat_id: str) -> List[Dict]:
         """
-        List all trips for user, ordered by most recent activity.
+        List all trips for this chat, ordered by most recent activity.
 
         Args:
-            user_id: Telegram user ID
+            user_id: Telegram user ID (for future per-user permissions)
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
 
         Returns:
             list: List of trip dictionaries
@@ -118,7 +126,7 @@ class TripService:
         try:
             result = self.supabase.table('trips')\
                 .select('*')\
-                .eq('user_id', user_id)\
+                .eq('chat_id', chat_id)\
                 .order('last_activity_at', desc=True)\
                 .execute()
 
@@ -166,36 +174,39 @@ class TripService:
         except Exception as e:
             print(f"Error updating trip activity: {e}")
 
-    async def _set_current_trip(self, user_id: str, trip_id: int):
+    async def _set_current_trip(self, user_id: str, chat_id: str, trip_id: int):
         """
-        Set current trip in user session.
+        Set current trip in user session for this chat.
         Uses upsert to create or update session.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
             trip_id: Trip ID to set as current
         """
         try:
             session_data = {
                 "user_id": user_id,
+                "chat_id": chat_id,
                 "current_trip_id": trip_id,
                 "last_activity_at": datetime.now().isoformat()
             }
 
-            # Upsert user session (insert or update)
+            # Upsert user session with composite key (user_id, chat_id)
             self.supabase.table('user_sessions')\
-                .upsert(session_data, on_conflict='user_id')\
+                .upsert(session_data, on_conflict='user_id,chat_id')\
                 .execute()
         except Exception as e:
             print(f"Error setting current trip: {e}")
 
-    async def get_or_update_session(self, user_id: str, state: str = None,
-                                   context: Dict = None) -> Dict:
+    async def get_or_update_session(self, user_id: str, chat_id: str,
+                                   state: str = None, context: Dict = None) -> Dict:
         """
-        Get or create user session with optional state/context update.
+        Get or create user session for this chat with optional state/context update.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
             state: Optional conversation state to set
             context: Optional context data to store
 
@@ -203,10 +214,11 @@ class TripService:
             dict: Session data
         """
         try:
-            # Try to get existing session
+            # Try to get existing session for this user in this chat
             result = self.supabase.table('user_sessions')\
                 .select('*')\
                 .eq('user_id', user_id)\
+                .eq('chat_id', chat_id)\
                 .execute()
 
             if result.data and len(result.data) > 0:
@@ -223,6 +235,7 @@ class TripService:
                     self.supabase.table('user_sessions')\
                         .update(updates)\
                         .eq('user_id', user_id)\
+                        .eq('chat_id', chat_id)\
                         .execute()
 
                     # Merge updates into session
@@ -230,9 +243,10 @@ class TripService:
 
                 return session
             else:
-                # Create new session
+                # Create new session for this user in this chat
                 session_data = {
                     "user_id": user_id,
+                    "chat_id": chat_id,
                     "conversation_state": state,
                     "conversation_context": context or {},
                     "last_activity_at": datetime.now().isoformat()
@@ -247,12 +261,13 @@ class TripService:
             print(f"Error managing session: {e}")
             return {}
 
-    async def clear_conversation_state(self, user_id: str):
+    async def clear_conversation_state(self, user_id: str, chat_id: str):
         """
         Clear conversation state after completing multi-step flow.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
         """
         try:
             self.supabase.table('user_sessions')\
@@ -261,6 +276,44 @@ class TripService:
                     "conversation_context": None
                 })\
                 .eq('user_id', user_id)\
+                .eq('chat_id', chat_id)\
                 .execute()
         except Exception as e:
             print(f"Error clearing conversation state: {e}")
+
+    async def switch_trip(self, user_id: str, chat_id: str, trip_id: int) -> Dict:
+        """
+        Switch active trip for this chat.
+        Verifies trip belongs to this chat before switching.
+
+        Args:
+            user_id: Telegram user ID requesting the switch
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
+            trip_id: Trip ID to switch to
+
+        Returns:
+            dict: {"success": bool, "trip": dict} or {"success": False, "error": str}
+        """
+        try:
+            # Verify trip exists and belongs to this chat
+            trip_result = self.supabase.table('trips')\
+                .select('*')\
+                .eq('id', trip_id)\
+                .eq('chat_id', chat_id)\
+                .execute()
+
+            if not trip_result.data or len(trip_result.data) == 0:
+                return {"success": False, "error": "Trip not found in this chat"}
+
+            trip = trip_result.data[0]
+
+            # Set as current trip for this user in this chat
+            await self._set_current_trip(user_id, chat_id, trip_id)
+
+            # Update trip activity timestamp
+            await self.update_trip_activity(trip_id)
+
+            return {"success": True, "trip": trip}
+        except Exception as e:
+            print(f"Error switching trip: {e}")
+            return {"success": False, "error": str(e)}

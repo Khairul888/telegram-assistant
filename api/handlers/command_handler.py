@@ -25,12 +25,14 @@ class CommandHandler:
         self.itinerary_service = itinerary_service
         self.places_service = places_service
 
-    async def handle_new_trip(self, user_id: str, message_text: str) -> str:
+    async def handle_new_trip(self, user_id: str, chat_id: str, chat_type: str, message_text: str) -> str:
         """
         Handle /new_trip command - start trip creation flow.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID (group ID or user ID for DMs)
+            chat_type: Chat type (private, group, supergroup)
             message_text: Full command message
 
         Returns:
@@ -50,27 +52,36 @@ I'll then ask for location and participants."""
         # Set conversation state to await location
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_location',
-            context={'trip_name': trip_name}
+            context={'trip_name': trip_name, 'chat_type': chat_type}
         )
 
-        return f"""Great! Creating trip: "{trip_name}"
+        if chat_type in ['group', 'supergroup']:
+            return f"""Great! Creating trip: "{trip_name}" for this group.
+
+Where are you traveling to? (e.g., "Tokyo, Japan")
+
+Note: All group members will be able to access and manage this trip!"""
+        else:
+            return f"""Great! Creating trip: "{trip_name}"
 
 Where are you traveling to? (e.g., "Tokyo, Japan")"""
 
-    async def handle_location_response(self, user_id: str, location: str) -> str:
+    async def handle_location_response(self, user_id: str, chat_id: str, location: str) -> str:
         """
         Handle location response during trip creation.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             location: Location text
 
         Returns:
             str: Response message
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
         trip_name = context.get('trip_name')
 
@@ -81,6 +92,7 @@ Where are you traveling to? (e.g., "Tokyo, Japan")"""
         context['location'] = location
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_participants',
             context=context
         )
@@ -92,22 +104,24 @@ Example: Alice, Bob, Carol
 
 (Include yourself if you want to track your expenses too!)"""
 
-    async def handle_participants_response(self, user_id: str, participants_text: str) -> str:
+    async def handle_participants_response(self, user_id: str, chat_id: str, participants_text: str) -> str:
         """
         Handle participants response and create trip.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             participants_text: Comma-separated participant names
 
         Returns:
             str: Response message
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
         trip_name = context.get('trip_name')
         location = context.get('location')
+        chat_type = context.get('chat_type', 'private')
 
         if not trip_name or not location:
             return "Error: Trip creation session expired. Please start over with /new_trip"
@@ -120,16 +134,31 @@ Example: Alice, Bob, Carol
 
         # Create trip
         result = await self.trip_service.create_trip(
-            user_id, trip_name, location, participants
+            user_id, chat_id, chat_type, trip_name, location, participants
         )
 
         if result.get('success'):
             # Clear conversation state
-            await self.trip_service.clear_conversation_state(user_id)
+            await self.trip_service.clear_conversation_state(user_id, chat_id)
 
             participants_list = '\n'.join([f"  • {p}" for p in participants])
 
-            return f"""✅ Trip "{trip_name}" created!
+            if chat_type in ['group', 'supergroup']:
+                return f"""✅ Trip "{trip_name}" created for this group!
+
+📍 Location: {location}
+👥 Participants:
+{participants_list}
+
+All group members can now:
+• Upload receipts and documents
+• Add expenses with /add_expense
+• Check balances with /balance
+• View trips with /list_trips
+
+This trip is now active. Switch between trips using /switch_trip"""
+            else:
+                return f"""✅ Trip "{trip_name}" created!
 
 📍 Location: {location}
 👥 Participants:
@@ -144,20 +173,21 @@ Commands:
         else:
             return f"❌ Error creating trip: {result.get('error')}"
 
-    async def handle_expense_fields_response(self, user_id: str, user_input: str) -> str:
+    async def handle_expense_fields_response(self, user_id: str, chat_id: str, user_input: str) -> str:
         """
         Handle user response when expense is missing required fields.
         Continues the expense creation with the new information.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             user_input: User's response text
 
         Returns:
             str: Response message (success or further prompt)
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
         incomplete_expense = context.get('incomplete_expense', {})
         missing_fields = context.get('missing_fields', [])
@@ -165,7 +195,7 @@ Commands:
 
         if not incomplete_expense or not trip_id:
             # Session expired
-            await self.trip_service.clear_conversation_state(user_id)
+            await self.trip_service.clear_conversation_state(user_id, chat_id)
             return "The expense session has expired. Please start over by telling me about the expense."
 
         # Get trip info for context
@@ -281,6 +311,7 @@ Output: {{"split_between": ["Khairul", "Alice", "Bob"]}}"""
             # Update session with filled data and remaining missing fields
             await self.trip_service.get_or_update_session(
                 user_id=user_id,
+                chat_id=chat_id,
                 state='awaiting_expense_fields',
                 context={
                     'incomplete_expense': incomplete_expense,
@@ -312,7 +343,7 @@ Output: {{"split_between": ["Khairul", "Alice", "Bob"]}}"""
         )
 
         # Clear conversation state
-        await self.trip_service.clear_conversation_state(user_id)
+        await self.trip_service.clear_conversation_state(user_id, chat_id)
 
         if result.get('success'):
             expense = result.get('expense', {})
@@ -335,17 +366,18 @@ Output: {{"split_between": ["Khairul", "Alice", "Bob"]}}"""
         else:
             return f"❌ Error creating expense: {result.get('error')}"
 
-    async def handle_list_trips(self, user_id: str) -> str:
+    async def handle_list_trips(self, user_id: str, chat_id: str) -> str:
         """
         Handle /list_trips command.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
 
         Returns:
             str: Response message with trip list
         """
-        trips = await self.trip_service.list_trips(user_id)
+        trips = await self.trip_service.list_trips(user_id, chat_id)
 
         if not trips:
             return """You don't have any trips yet!
@@ -354,7 +386,7 @@ Create one with: /new_trip <trip name>
 
 Example: /new_trip Paris 2025"""
 
-        current_trip = await self.trip_service.get_current_trip(user_id)
+        current_trip = await self.trip_service.get_current_trip(user_id, chat_id)
         current_id = current_trip['id'] if current_trip else None
 
         trips_text = []
@@ -372,17 +404,18 @@ Example: /new_trip Paris 2025"""
 
         return "Your trips:\n\n" + "\n\n".join(trips_text)
 
-    async def handle_current_trip(self, user_id: str) -> str:
+    async def handle_current_trip(self, user_id: str, chat_id: str) -> str:
         """
         Handle /current_trip command.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
 
         Returns:
             str: Response message with current trip details
         """
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
 
         if not trip:
             return """No active trip found.
@@ -414,17 +447,18 @@ Created: {created_date}
 
 Use /balance to see settlement details."""
 
-    async def handle_balance(self, user_id: str) -> str:
+    async def handle_balance(self, user_id: str, chat_id: str) -> str:
         """
         Handle /balance command - show running balance.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
 
         Returns:
             str: Response message with settlement details
         """
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
 
         if not trip:
             return "No active trip. Create one with /new_trip"
@@ -443,6 +477,66 @@ Settlement:
 {balance}
 
 This shows the total owed across all expenses for this trip."""
+
+    async def handle_switch_trip(self, user_id: str, chat_id: str, message_text: str) -> str:
+        """
+        Handle /switch_trip command for context switching between trips.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            message_text: Full message text including command
+
+        Returns:
+            str: Response message with trip list or switch confirmation
+        """
+        trips = await self.trip_service.list_trips(user_id, chat_id)
+        if not trips:
+            return "No trips in this chat. Create one with /new_trip"
+
+        parts = message_text.split(maxsplit=1)
+
+        if len(parts) == 1:
+            # Show list with IDs
+            current = await self.trip_service.get_current_trip(user_id, chat_id)
+            current_id = current['id'] if current else None
+
+            trips_text = []
+            for trip in trips:
+                marker = "🟢" if trip['id'] == current_id else "⚪"
+                participants_count = len(trip.get('participants', []))
+                trips_text.append(
+                    f"{marker} ID: {trip['id']} - {trip['trip_name']}\n"
+                    f"   📍 {trip.get('location', 'Unknown')} | "
+                    f"👥 {participants_count} people"
+                )
+
+            return f"""Select trip to activate:
+
+{chr(10).join(trips_text)}
+
+Use: /switch_trip <ID>"""
+
+        else:
+            # Switch to specified trip
+            try:
+                trip_id = int(parts[1].strip())
+            except ValueError:
+                return "Invalid trip ID. Use: /switch_trip <ID>"
+
+            result = await self.trip_service.switch_trip(user_id, chat_id, trip_id)
+
+            if result['success']:
+                trip = result['trip']
+                participants_count = len(trip.get('participants', []))
+                return f"""Switched to: {trip['trip_name']}
+
+📍 {trip.get('location')}
+👥 {participants_count} participants
+
+All commands now operate on this trip."""
+            else:
+                return f"Error: {result.get('error')}"
 
     async def handle_start(self) -> str:
         """Handle /start command."""
@@ -464,15 +558,28 @@ Commands:
 • /balance - Check who owes what
 • /help - Show this message"""
 
-    async def handle_help(self) -> str:
-        """Handle /help command."""
-        return """📚 Commands Guide:
+    async def handle_help(self, chat_type: str = 'private') -> str:
+        """Handle /help command with chat-type aware messaging.
+
+        Args:
+            chat_type: Chat type (private, group, supergroup)
+        """
+        base_help = """📚 Commands Guide:
 
 TRIPS:
 • /new_trip <name> - Create new trip
   Example: /new_trip Tokyo 2025
-• /list_trips - View all trips
-• /current_trip - Show active trip details
+• /list_trips - View all trips"""
+
+        if chat_type in ['group', 'supergroup']:
+            base_help += """
+• /switch_trip [ID] - Switch active trip for this group
+• /current_trip - Show active trip details"""
+        else:
+            base_help += """
+• /current_trip - Show active trip details"""
+
+        base_help += """
 
 EXPENSES:
 • /add_expense <amount> <description> - Add expense manually
@@ -484,16 +591,28 @@ EXPENSES:
 TRAVEL INFO:
 • Upload flight ticket → I'll remember details
 • Upload hotel booking → I'll save check-in dates
-• Ask: "when's my flight?" or "where are we staying?"
+• /itinerary - View trip schedule
+• /wishlist - See places to visit
 
 OTHER:
 • /start - Welcome message
 • /help - This guide
 
-Tips:
+Tips:"""
+
+        if chat_type in ['group', 'supergroup']:
+            base_help += """
+  - Any group member can create and access trips
+  - Use /switch_trip to change active trip
+  - Participants are simple names (not Telegram accounts)
+  - Latest trip is automatically active"""
+        else:
+            base_help += """
   - Latest trip is automatically active
   - All uploads are linked to current trip
   - Use simple names for participants (no Telegram accounts needed)"""
+
+        return base_help
 
     async def handle_add_expense(self, user_id: str, chat_id: str, message_text: str) -> Dict:
         """
@@ -1150,12 +1269,13 @@ This cannot be undone."""
         else:
             return {"response": message, "keyboard": None}
 
-    async def handle_confirm_delete_callback(self, user_id: str, expense_id: int) -> str:
+    async def handle_confirm_delete_callback(self, user_id: str, chat_id: str, expense_id: int) -> str:
         """
         Handle confirmed expense deletion.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             expense_id: Expense ID to delete
 
         Returns:
@@ -1253,6 +1373,7 @@ What would you like to edit?"""
         # Store in session
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_edit_amount',
             context={'expense_id': expense_id}
         )
@@ -1263,10 +1384,10 @@ Current: ${current_amount:.2f}
 
 Reply with the new amount (e.g., 75.50)"""
 
-    async def handle_edit_amount_text(self, user_id: str, text: str) -> str:
+    async def handle_edit_amount_text(self, user_id: str, chat_id: str, text: str) -> str:
         """Handle new amount text input."""
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
         expense_id = context.get('expense_id')
 
@@ -1307,7 +1428,7 @@ Reply with the new amount (e.g., 75.50)"""
             }).eq('id', expense_id).execute()
 
         # Clear session
-        await self.trip_service.clear_conversation_state(user_id)
+        await self.trip_service.clear_conversation_state(user_id, chat_id)
 
         return f"""Amount updated!
 
@@ -1328,6 +1449,7 @@ Use /list_expenses to see updated expense."""
         # Store in session
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_edit_description',
             context={'expense_id': expense_id}
         )
@@ -1338,10 +1460,10 @@ Current: {current_description}
 
 Reply with the new description"""
 
-    async def handle_edit_description_text(self, user_id: str, text: str) -> str:
+    async def handle_edit_description_text(self, user_id: str, chat_id: str, text: str) -> str:
         """Handle new description text input."""
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
         expense_id = context.get('expense_id')
 
@@ -1367,7 +1489,7 @@ Reply with the new description"""
         }).eq('id', expense_id).execute()
 
         # Clear session
-        await self.trip_service.clear_conversation_state(user_id)
+        await self.trip_service.clear_conversation_state(user_id, chat_id)
 
         return f"""Description updated!
 
@@ -1384,7 +1506,7 @@ Use /list_expenses to see updated expense."""
             return {"response": "Expense not found.", "keyboard": None}
 
         trip_id = expense['trip_id']
-        trip_result = await self.trip_service.get_current_trip(user_id)
+        trip_result = await self.trip_service.get_current_trip(user_id, chat_id)
 
         # Also try to get trip by ID if current trip doesn't match
         if not trip_result or trip_result.get('id') != trip_id:
@@ -1403,6 +1525,7 @@ Use /list_expenses to see updated expense."""
         # Store in session
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_edit_payer',
             context={'expense_id': expense_id}
         )
@@ -1426,7 +1549,7 @@ Current payer: {current_payer}"""
         else:
             return {"response": message, "keyboard": None}
 
-    async def handle_edit_payer_select_callback(self, user_id: str, expense_id: int, new_payer: str) -> str:
+    async def handle_edit_payer_select_callback(self, user_id: str, chat_id: str, expense_id: int, new_payer: str) -> str:
         """Handle payer selection for edit."""
         # Get expense
         expense = await self.expense_service.get_expense_by_id(expense_id)
@@ -1443,7 +1566,7 @@ Current payer: {current_payer}"""
         }).eq('id', expense_id).execute()
 
         # Clear session
-        await self.trip_service.clear_conversation_state(user_id)
+        await self.trip_service.clear_conversation_state(user_id, chat_id)
 
         return f"""Payer updated!
 
@@ -1477,6 +1600,7 @@ Use /list_expenses to see updated expense."""
         # Store in session
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_expense_participants',
             context={
                 'expense_id': expense_id,
@@ -1515,12 +1639,13 @@ Select all who should split this expense:"""
         """Handle cancelled expense edit."""
         return "Edit cancelled."
 
-    async def handle_itinerary(self, user_id: str) -> str:
+    async def handle_itinerary(self, user_id: str, chat_id: str) -> str:
         """
         Handle /itinerary command - show trip schedule.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
 
         Returns:
             str: Formatted itinerary or error message
@@ -1529,7 +1654,7 @@ Select all who should split this expense:"""
             return "Itinerary feature not available."
 
         # Get current trip
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return """❌ No active trip found!
 
@@ -1575,12 +1700,13 @@ You can paste your schedule and I'll detect it automatically, or add items manua
 
         return "\n".join(response_lines)
 
-    async def handle_wishlist(self, user_id: str) -> str:
+    async def handle_wishlist(self, user_id: str, chat_id: str) -> str:
         """
         Handle /wishlist command - show places to visit.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
 
         Returns:
             str: Formatted wishlist or error message
@@ -1589,7 +1715,7 @@ You can paste your schedule and I'll detect it automatically, or add items manua
             return "Wishlist feature not available."
 
         # Get current trip
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return """❌ No active trip found!
 

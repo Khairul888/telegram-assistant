@@ -11,7 +11,7 @@ class ItineraryAgent(BaseAgent):
         return ITINERARY_TOOLS
 
     async def _call_function(self, function_name: str, args: dict,
-                            user_id: str, trip_id: int) -> dict:
+                            user_id: str, chat_id: str, trip_id: int) -> dict:
         """Execute itinerary service calls."""
         itinerary_service = self.services.get('itinerary')
 

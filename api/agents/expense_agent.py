@@ -11,7 +11,7 @@ class ExpenseAgent(BaseAgent):
         return EXPENSE_TOOLS
 
     async def _call_function(self, function_name: str, args: dict,
-                            user_id: str, trip_id: int) -> dict:
+                            user_id: str, chat_id: str, trip_id: int) -> dict:
         """Execute expense service calls."""
         expense_service = self.services.get('expense')
         settlement_service = self.services.get('settlement')

@@ -17,19 +17,20 @@ class MessageHandler:
         self.trip_service = trip_service
         self.supabase = supabase
 
-    async def handle_question(self, user_id: str, question_text: str) -> str:
+    async def handle_question(self, user_id: str, chat_id: str, question_text: str) -> str:
         """
         Handle user question with trip-scoped context.
 
         Args:
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             question_text: User's question
 
         Returns:
             str: AI-generated response based on trip context
         """
         # Get current trip
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
 
         if not trip:
             return """I don't have any trip context yet.

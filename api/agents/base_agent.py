@@ -70,6 +70,7 @@ class BaseAgent:
                     result["function_name"],
                     result["arguments"],
                     user_id,
+                    chat_id,
                     trip_context["id"]
                 )
 
@@ -99,7 +100,7 @@ class BaseAgent:
             return {"success": False, "response": f"Error: {str(e)}", "already_sent": False}
 
     async def _call_function(self, function_name: str, args: dict,
-                            user_id: str, trip_id: int) -> dict:
+                            user_id: str, chat_id: str, trip_id: int) -> dict:
         """
         Override in subclass to execute function calls.
 
@@ -107,6 +108,7 @@ class BaseAgent:
             function_name: Name of the function to call
             args: Function arguments
             user_id: Telegram user ID
+            chat_id: Telegram chat ID
             trip_id: Trip ID
 
         Returns:

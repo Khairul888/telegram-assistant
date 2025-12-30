@@ -11,7 +11,7 @@ class TripAgent(BaseAgent):
         return TRIP_TOOLS
 
     async def _call_function(self, function_name: str, args: dict,
-                            user_id: str, trip_id: int) -> dict:
+                            user_id: str, chat_id: str, trip_id: int) -> dict:
         """Execute trip service calls."""
         trip_service = self.services.get('trip')
 
@@ -20,7 +20,7 @@ class TripAgent(BaseAgent):
 
         if function_name == "get_current_trip":
             try:
-                trip = await trip_service.get_current_trip(user_id)
+                trip = await trip_service.get_current_trip(user_id, chat_id)
 
                 if not trip:
                     return {"success": False, "error": "No active trip found"}
@@ -32,7 +32,7 @@ class TripAgent(BaseAgent):
 
         elif function_name == "get_all_trips":
             try:
-                trips = await trip_service.list_trips(user_id)
+                trips = await trip_service.list_trips(user_id, chat_id)
 
                 return {"success": True, "trips": trips}
             except Exception as e:

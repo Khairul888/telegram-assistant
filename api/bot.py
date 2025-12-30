@@ -192,17 +192,37 @@ class handler(BaseHTTPRequestHandler):
                 return
 
             message = update["message"]
-            chat_id = str(message["chat"]["id"])
+            chat_obj = message["chat"]
+            chat_id = str(chat_obj["id"])
             user_id = str(message["from"]["id"])
+            chat_type = chat_obj.get("type", "private")  # private, group, supergroup, channel
 
-            # Security check - only allow authorized chat
-            authorized_chat_id = os.getenv('TELEGRAM_CHAT_ID', '1316304260')
-            if chat_id != authorized_chat_id:
-                print(f"Unauthorized chat ID: {chat_id}")
+            # Security check - authorization based on chat type
+            if chat_type == "private":
+                # DM: Check if user is authorized
+                authorized_user = os.getenv('TELEGRAM_CHAT_ID', '1316304260')
+                if chat_id != authorized_user:
+                    print(f"Unauthorized DM from user: {chat_id}")
+                    return
+            elif chat_type in ["group", "supergroup"]:
+                # Group: Check if group is in authorized list
+                authorized_groups_str = os.getenv('TELEGRAM_GROUP_IDS', '')
+                authorized_groups = [g.strip() for g in authorized_groups_str.split(',') if g.strip()]
+
+                if authorized_groups and chat_id not in authorized_groups:
+                    print(f"Unauthorized group: {chat_id}")
+                    await telegram_utils.send_message(
+                        chat_id,
+                        "This bot is not authorized for this group. Please contact the bot owner."
+                    )
+                    return
+            else:
+                # Unsupported chat type (e.g., channels)
+                print(f"Unsupported chat type: {chat_type}")
                 return
 
-            # Get session to check conversation state
-            session = await trip_service.get_or_update_session(user_id)
+            # Get session to check conversation state (per-user-per-chat)
+            session = await trip_service.get_or_update_session(user_id, chat_id)
             state = session.get('conversation_state')
 
             # Handle file uploads
@@ -219,17 +239,17 @@ class handler(BaseHTTPRequestHandler):
             response = None
 
             if state == 'awaiting_location':
-                response = await command_handler.handle_location_response(user_id, text)
+                response = await command_handler.handle_location_response(user_id, chat_id, text)
             elif state == 'awaiting_participants':
-                response = await command_handler.handle_participants_response(user_id, text)
+                response = await command_handler.handle_participants_response(user_id, chat_id, text)
             elif state == 'awaiting_expense_fields':
-                response = await command_handler.handle_expense_fields_response(user_id, text)
+                response = await command_handler.handle_expense_fields_response(user_id, chat_id, text)
             elif state == 'awaiting_custom_split':
                 response = await command_handler.handle_custom_split_text(user_id, chat_id, text)
             elif state == 'awaiting_edit_amount':
-                response = await command_handler.handle_edit_amount_text(user_id, text)
+                response = await command_handler.handle_edit_amount_text(user_id, chat_id, text)
             elif state == 'awaiting_edit_description':
-                response = await command_handler.handle_edit_description_text(user_id, text)
+                response = await command_handler.handle_edit_description_text(user_id, chat_id, text)
             elif state == 'awaiting_itinerary_confirmation':
                 # Handled via callback, ignore text
                 response = "Please use the buttons above to confirm or cancel."
@@ -237,7 +257,7 @@ class handler(BaseHTTPRequestHandler):
                 # Handled via callback, ignore text
                 response = "Please select a category using the buttons above."
             elif text.startswith('/new_trip'):
-                response = await command_handler.handle_new_trip(user_id, text)
+                response = await command_handler.handle_new_trip(user_id, chat_id, chat_type, text)
             elif text.startswith('/add_expense'):
                 result = await command_handler.handle_add_expense(user_id, chat_id, text)
                 if result.get("response"):
@@ -245,28 +265,30 @@ class handler(BaseHTTPRequestHandler):
                 # If keyboard was sent, message already sent in handler
                 return
             elif text.startswith('/list_trips'):
-                response = await command_handler.handle_list_trips(user_id)
+                response = await command_handler.handle_list_trips(user_id, chat_id)
             elif text.startswith('/current_trip'):
-                response = await command_handler.handle_current_trip(user_id)
+                response = await command_handler.handle_current_trip(user_id, chat_id)
             elif text.startswith('/balance'):
-                response = await command_handler.handle_balance(user_id)
+                response = await command_handler.handle_balance(user_id, chat_id)
             elif text.startswith('/list_expenses'):
                 result = await command_handler.handle_list_expenses(user_id, chat_id)
                 if result.get("response"):
                     await telegram_utils.send_message(chat_id, result["response"])
                 return
+            elif text.startswith('/switch_trip'):
+                response = await command_handler.handle_switch_trip(user_id, chat_id, text)
             elif text.startswith('/start'):
                 response = await command_handler.handle_start()
             elif text.startswith('/help'):
-                response = await command_handler.handle_help()
+                response = await command_handler.handle_help(chat_type)
             elif text.startswith('/itinerary'):
-                response = await command_handler.handle_itinerary(user_id)
+                response = await command_handler.handle_itinerary(user_id, chat_id)
             elif text.startswith('/wishlist'):
-                response = await command_handler.handle_wishlist(user_id)
+                response = await command_handler.handle_wishlist(user_id, chat_id)
             else:
                 # Conversational handling (only if no active state)
                 if not state:
-                    trip = await trip_service.get_current_trip(user_id)
+                    trip = await trip_service.get_current_trip(user_id, chat_id)
                     if trip:
                         # NEW: Agent-based routing (feature-flag controlled)
                         if agents_enabled and router:
@@ -303,7 +325,7 @@ class handler(BaseHTTPRequestHandler):
 
                 # Fallback to Q&A if no intent matched or no trip
                 if not response:
-                    response = await message_handler.handle_question(user_id, text)
+                    response = await message_handler.handle_question(user_id, chat_id, text)
 
             if response:
                 await telegram_utils.send_message(chat_id, response)
@@ -387,7 +409,7 @@ class handler(BaseHTTPRequestHandler):
                 # Confirm delete expense
                 expense_id = int(callback_data.split(":")[1])
                 response = await command_handler.handle_confirm_delete_callback(
-                    user_id, expense_id
+                    user_id, chat_id, expense_id
                 )
                 if response:
                     await telegram_utils.send_message(chat_id, response)
@@ -425,7 +447,7 @@ class handler(BaseHTTPRequestHandler):
                     expense_id = int(parts[1])
                     new_payer = parts[2]
                     response = await command_handler.handle_edit_payer_select_callback(
-                        user_id, expense_id, new_payer
+                        user_id, chat_id, expense_id, new_payer
                     )
                     if response:
                         await telegram_utils.send_message(chat_id, response)
