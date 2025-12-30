@@ -882,11 +882,19 @@ Add expenses with /add_expense or upload a receipt!""",
             merchant = expense.get('merchant_name', 'Unknown')
             paid_by = expense.get('paid_by', 'Unknown')
             date = expense.get('transaction_date', '')[:10] if expense.get('transaction_date') else 'No date'
-            split_between = expense.get('split_between', [])
-            split_count = len(split_between) if isinstance(split_between, list) else 0
+            split_amounts = expense.get('split_amounts', {})
 
             message += f"{idx}. ${amount:.2f} - {merchant}\n"
-            message += f"   Paid by: {paid_by} | Split: {split_count} people | {date}\n\n"
+            message += f"   Paid by: {paid_by} | Date: {date}\n"
+
+            # Show split breakdown if available
+            if split_amounts and isinstance(split_amounts, dict):
+                message += f"   Split breakdown:\n"
+                for person, owed_amount in split_amounts.items():
+                    if person != paid_by:  # Don't show "owes" for the person who paid
+                        message += f"     • {person} owes: ${owed_amount:.2f}\n"
+
+            message += "\n"
 
         # Add buttons for each expense
         keyboard = {
