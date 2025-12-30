@@ -5,29 +5,108 @@ from PIL import Image
 import io
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
+    from google.oauth2.service_account import Credentials
+    import pypdfium2 as pdfium
     DEPENDENCIES_AVAILABLE = True
 except ImportError:
     DEPENDENCIES_AVAILABLE = False
+    print("Warning: google-genai or pypdfium2 not available")
 
 
 class GeminiService:
     """Gemini AI service for document processing and Q&A."""
 
     def __init__(self):
-        """Initialize Gemini with API key from environment."""
-        if DEPENDENCIES_AVAILABLE:
-            api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
-            if api_key:
-                genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-2.5-flash')
-                self.available = True
-            else:
-                self.available = False
-                print("Warning: GOOGLE_GEMINI_API_KEY not found")
-        else:
+        """Initialize Gemini with Vertex AI service account."""
+        if not DEPENDENCIES_AVAILABLE:
             self.available = False
-            print("Warning: google-generativeai package not available")
+            print("Warning: Required packages not available")
+            return
+
+        # Primary: Vertex AI with service account
+        if self._init_vertex_ai():
+            self.available = True
+            self.backend = "vertex_ai"
+            print(f"Initialized: Vertex AI ({os.getenv('GCP_PROJECT_ID')})")
+            return
+
+        # === FALLBACK CODE (COMMENTED OUT) ===
+        # Uncomment below to enable Gemini API fallback if Vertex AI fails
+        # if self._init_gemini_api():
+        #     self.available = True
+        #     self.backend = "gemini_api"
+        #     print("Initialized: Gemini API (fallback)")
+        #     return
+
+        # If we reach here, Vertex AI failed and fallback is disabled
+        self.available = False
+        print("ERROR: Vertex AI initialization failed. Check credentials:")
+        print("  - GCP_PROJECT_ID")
+        print("  - GCP_LOCATION")
+        print("  - GOOGLE_CLIENT_EMAIL")
+        print("  - GOOGLE_PRIVATE_KEY")
+
+    def _init_vertex_ai(self) -> bool:
+        """Initialize with Vertex AI + service account."""
+        try:
+            project_id = os.getenv('GCP_PROJECT_ID')
+            location = os.getenv('GCP_LOCATION', 'us-central1')
+            client_email = os.getenv('GOOGLE_CLIENT_EMAIL')
+            private_key = os.getenv('GOOGLE_PRIVATE_KEY')
+
+            if not all([project_id, client_email, private_key]):
+                print("Vertex AI credentials incomplete")
+                return False
+
+            # Build service account credentials dictionary
+            credentials_dict = {
+                "type": "service_account",
+                "project_id": project_id,
+                "private_key_id": "key-1",  # Placeholder, not validated by Google
+                "private_key": private_key.replace('\\n', '\n'),  # Normalize newlines
+                "client_email": client_email,
+                "client_id": "",
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            }
+
+            # Create credentials from service account info
+            credentials = Credentials.from_service_account_info(
+                credentials_dict,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+
+            # Initialize google-genai client with Vertex AI backend
+            self.client = genai.Client(
+                vertexai=True,
+                project=project_id,
+                location=location,
+                credentials=credentials,
+                http_options={'api_version': 'v1'}
+            )
+
+            return True
+
+        except Exception as e:
+            print(f"Vertex AI init error: {e}")
+            return False
+
+    def _init_gemini_api(self) -> bool:
+        """Initialize with Gemini API + API key (FALLBACK - currently disabled)."""
+        try:
+            api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+            if not api_key:
+                return False
+
+            self.client = genai.Client(api_key=api_key)
+            return True
+
+        except Exception as e:
+            print(f"Gemini API init error: {e}")
+            return False
 
     def _extract_json_from_response(self, text: str) -> dict:
         """
@@ -131,7 +210,10 @@ class GeminiService:
             if system_instruction:
                 full_prompt = f"{system_instruction}\n\nUser: {prompt}"
 
-            response = self.model.generate_content(full_prompt)
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=full_prompt
+            )
             return response.text if response.text else "I'm unable to generate a response right now."
         except Exception as e:
             return f"AI service error: {str(e)}"
@@ -162,7 +244,10 @@ class GeminiService:
 
 Return only the classification type, nothing else. Do not use bold formatting or include reasoning."""
 
-            response = self.model.generate_content([classification_prompt, image])
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[classification_prompt, image]
+            )
 
             classification = response.text.strip().lower() if response.text else "other_document"
 
@@ -220,7 +305,10 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
 Do not use bold formatting or include reasoning."""
 
-            response = self.model.generate_content([flight_prompt, image])
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[flight_prompt, image]
+            )
 
             if response.text:
                 try:
@@ -280,7 +368,10 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
 Do not use bold formatting or include reasoning."""
 
-            response = self.model.generate_content([receipt_prompt, image])
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[receipt_prompt, image]
+            )
 
             if response.text:
                 try:
@@ -339,7 +430,10 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
 
 Do not use bold formatting or include reasoning."""
 
-            response = self.model.generate_content([hotel_prompt, image])
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[hotel_prompt, image]
+            )
 
             if response.text:
                 try:
@@ -363,7 +457,10 @@ Do not use bold formatting or include reasoning."""
 
     async def process_pdf(self, pdf_data: bytes, document_type: str = None) -> dict:
         """
-        Process multi-page PDF document using Gemini File API.
+        Process multi-page PDF document.
+
+        Strategy 1 (Primary): Convert PDF to images inline, process with Vertex AI
+        Strategy 2 (Fallback): Use Gemini API File API (activate if Strategy 1 fails)
 
         Args:
             pdf_data: PDF file bytes
@@ -375,42 +472,41 @@ Do not use bold formatting or include reasoning."""
         if not self.available:
             return {"success": False, "error": "AI service not available"}
 
+        # === STRATEGY SELECTOR ===
+        # Toggle between inline conversion vs File API
+        USE_INLINE_PDF_CONVERSION = True  # Change to False to use File API fallback
+
+        if USE_INLINE_PDF_CONVERSION:
+            return await self._process_pdf_inline(pdf_data, document_type)
+        else:
+            return await self._process_pdf_file_api(pdf_data, document_type)
+
+    async def _process_pdf_inline(self, pdf_data: bytes, document_type: str = None) -> dict:
+        """Strategy 1: Convert PDF pages to images and process inline (Vertex AI compatible)."""
         try:
-            print(f"Processing PDF: {len(pdf_data)} bytes")
+            print(f"Processing PDF inline: {len(pdf_data)} bytes")
 
             # Validate PDF data
-            if not pdf_data:
-                return {"success": False, "error": "Empty PDF data received"}
+            if not pdf_data or len(pdf_data) < 100:
+                return {"success": False, "error": f"Invalid PDF data: {len(pdf_data)} bytes"}
 
-            if len(pdf_data) < 100:
-                return {"success": False, "error": f"PDF data too small: {len(pdf_data)} bytes"}
+            # Convert PDF to images using pypdfium2
+            pdf = pdfium.PdfDocument(pdf_data)
+            print(f"PDF loaded: {len(pdf)} pages")
 
-            # Upload PDF using File API (better for multi-page documents)
-            import tempfile
-            import os
+            # Convert all pages to PIL Images
+            images = []
+            for page_num in range(len(pdf)):
+                page = pdf[page_num]
+                bitmap = page.render(scale=2.0)  # 2x resolution for better OCR
+                pil_image = bitmap.to_pil()
+                images.append(pil_image)
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', mode='wb') as tmp_file:
-                tmp_file.write(pdf_data)
-                tmp_path = tmp_file.name
+            print(f"Converted {len(images)} pages to images")
 
-            try:
-                print(f"Uploading PDF to Gemini File API...")
-                uploaded_file = genai.upload_file(path=tmp_path, mime_type="application/pdf")
-                print(f"PDF uploaded: {uploaded_file.name}")
-
-                # Wait for file to be processed
-                import time
-                while uploaded_file.state.name == "PROCESSING":
-                    print("Waiting for file processing...")
-                    time.sleep(1)
-                    uploaded_file = genai.get_file(uploaded_file.name)
-
-                if uploaded_file.state.name == "FAILED":
-                    return {"success": False, "error": "File processing failed"}
-
-                # Classify document type if not provided
-                if not document_type:
-                    classification_prompt = """Analyze ALL PAGES of this PDF document and classify it as one of these types:
+            # Classify document type if not provided
+            if not document_type:
+                classification_prompt = """Analyze ALL PAGES of this document and classify it as one of these types:
 - flight_ticket: Airline boarding passes, flight confirmations, e-tickets
 - receipt: Restaurant bills, shopping receipts, purchase invoices
 - hotel_booking: Hotel confirmations, accommodation bookings
@@ -419,51 +515,321 @@ Do not use bold formatting or include reasoning."""
 
 Return only the classification type, nothing else. Do not use bold formatting or include reasoning."""
 
-                    response = self.model.generate_content([uploaded_file, classification_prompt])
-                    classification = response.text.strip().lower() if response.text else "other_document"
+                contents = [classification_prompt] + images
+                response = self.client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=contents
+                )
 
-                    # Validate classification
-                    valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
-                    if classification not in valid_types:
-                        classification = "other_document"
+                classification = response.text.strip().lower() if response.text else "other_document"
+                valid_types = ["flight_ticket", "receipt", "hotel_booking", "itinerary", "other_document"]
+                if classification not in valid_types:
+                    classification = "other_document"
 
-                    document_type = classification
-                    print(f"Classified as: {document_type}")
+                document_type = classification
+                print(f"Classified as: {document_type}")
 
-                # Extract data based on document type
-                if document_type == "flight_ticket":
-                    result = await self._extract_flight_from_pdf(uploaded_file)
-                elif document_type == "receipt":
-                    result = await self._extract_receipt_from_pdf(uploaded_file)
-                elif document_type == "hotel_booking":
-                    result = await self._extract_hotel_from_pdf(uploaded_file)
-                else:
-                    # Generic document
-                    result = {
-                        "success": True,
-                        "data": {},
-                        "confidence": 0.5
-                    }
+            # Extract data based on document type
+            if document_type == "flight_ticket":
+                result = await self._extract_flight_from_pdf_inline(images)
+            elif document_type == "receipt":
+                result = await self._extract_receipt_from_pdf_inline(images)
+            elif document_type == "hotel_booking":
+                result = await self._extract_hotel_from_pdf_inline(images)
+            else:
+                result = {"success": True, "data": {}, "confidence": 0.5}
 
-                # Add document_type to result
-                if result.get("success"):
-                    result["document_type"] = document_type
+            if result.get("success"):
+                result["document_type"] = document_type
 
-                # Clean up uploaded file
-                try:
-                    genai.delete_file(uploaded_file.name)
-                except:
-                    pass
+            return result
 
-                return result
+        except Exception as e:
+            print(f"Inline PDF processing error: {e}")
+            return {"success": False, "error": f"PDF processing error: {str(e)}"}
+
+    async def _process_pdf_file_api(self, pdf_data: bytes, document_type: str = None) -> dict:
+        """
+        Strategy 2: Use Gemini API File API for PDF processing (FALLBACK).
+
+        NOTE: This requires GOOGLE_GEMINI_API_KEY and uses Gemini API backend.
+        File API is NOT supported on Vertex AI.
+        """
+        try:
+            print(f"Processing PDF via File API: {len(pdf_data)} bytes")
+
+            # Validate PDF data
+            if not pdf_data or len(pdf_data) < 100:
+                return {"success": False, "error": f"Invalid PDF data: {len(pdf_data)} bytes"}
+
+            # Check if we have API key for File API
+            api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+            if not api_key:
+                return {
+                    "success": False,
+                    "error": "File API fallback requires GOOGLE_GEMINI_API_KEY. Either set the API key or use inline PDF conversion (USE_INLINE_PDF_CONVERSION=True)."
+                }
+
+            # Create separate Gemini API client for File API
+            file_api_client = genai.Client(api_key=api_key)
+
+            # Upload PDF using File API
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf', mode='wb') as tmp_file:
+                tmp_file.write(pdf_data)
+                tmp_path = tmp_file.name
+
+            try:
+                print(f"Uploading PDF to Gemini File API...")
+                uploaded_file = file_api_client.files.upload(
+                    path=tmp_path,
+                    config=types.UploadFileConfig(
+                        mime_type="application/pdf",
+                        display_name="travel_document.pdf"
+                    )
+                )
+                print(f"PDF uploaded: {uploaded_file.name}")
+
+                # Wait for processing
+                import time
+                while uploaded_file.state.name == "PROCESSING":
+                    print("Waiting for file processing...")
+                    time.sleep(1)
+                    uploaded_file = file_api_client.files.get(name=uploaded_file.name)
+
+                if uploaded_file.state.name == "FAILED":
+                    return {"success": False, "error": "File processing failed"}
+
+                # Classify and extract (using existing _extract_*_from_pdf methods)
+                # These methods will need uploaded_file parameter instead of images
+                # NOTE: Would need to update those methods to accept either format
+
+                # For now, return error indicating this needs implementation
+                return {
+                    "success": False,
+                    "error": "File API fallback not fully implemented. Use inline PDF conversion instead."
+                }
 
             finally:
-                # Clean up temp file
+                # Cleanup temp file
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
 
         except Exception as e:
+            print(f"File API PDF processing error: {e}")
             return {"success": False, "error": f"PDF processing error: {str(e)}"}
+
+    async def _extract_flight_from_pdf_inline(self, images: list) -> dict:
+        """Extract flight details from PDF images."""
+        try:
+            flight_prompt = """You are a precise data extraction expert. Carefully read ALL PAGES of this flight document (boarding pass, e-ticket, or flight confirmation).
+
+INSTRUCTIONS:
+1. Extract EXACT text as it appears - do not paraphrase or abbreviate
+2. For dates, convert to YYYY-MM-DD format
+3. For times, use 24-hour HH:MM format
+4. IMPORTANT: If this is a ROUND-TRIP ticket, extract BOTH the outbound AND return flights
+5. For multi-city trips, extract ALL flight segments
+6. Check header, footer, and all sections of ALL pages
+7. Each flight should be a separate object in the flights array
+
+Extract ALL flights and return ONLY a valid JSON object (no markdown, no explanation):
+
+{
+    "flights": [
+        {
+            "airline": "full airline name exactly as shown",
+            "flight_number": "flight code with letters and numbers (e.g., AA123, DL4567)",
+            "departure_city": "full departure city name",
+            "departure_airport": "3-letter IATA code (e.g., LAX, JFK)",
+            "departure_terminal": "departure terminal (e.g., Terminal 1, Terminal A, T2)",
+            "arrival_city": "full arrival city name",
+            "arrival_airport": "3-letter IATA code",
+            "arrival_terminal": "arrival terminal (e.g., Terminal 3, Terminal B, T4)",
+            "departure_date": "YYYY-MM-DD format",
+            "departure_time": "HH:MM in 24-hour format",
+            "arrival_date": "YYYY-MM-DD format",
+            "arrival_time": "HH:MM in 24-hour format",
+            "gate": "gate number/letter if available",
+            "seat": "seat assignment (e.g., 12A, 23F)",
+            "booking_reference": "PNR/confirmation code (usually 6 characters)",
+            "passenger_name": "passenger full name",
+            "class": "cabin class (Economy, Business, First, etc.)"
+        }
+    ]
+}
+
+CRITICAL:
+- For one-way tickets: flights array will have 1 object
+- For round-trip tickets: flights array will have 2 objects (outbound first, return second)
+- For multi-city: flights array will have multiple objects in chronological order
+- Use null for any field not found in the document
+- Booking reference is usually the SAME for all flights on the same reservation
+- Do not use bold formatting or include reasoning"""
+
+            contents = [flight_prompt] + images
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents
+            )
+
+            if response.text:
+                try:
+                    print(f"Raw flight response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text[:500]
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Flight extraction error: {str(e)}"}
+
+    async def _extract_receipt_from_pdf_inline(self, images: list) -> dict:
+        """Extract receipt details from PDF images."""
+        try:
+            receipt_prompt = """You are a precise receipt data extraction expert. Carefully read ALL PAGES of this receipt/invoice document.
+
+INSTRUCTIONS:
+1. Extract merchant name EXACTLY as it appears (usually at top in large text)
+2. Read ALL line items carefully - don't miss any
+3. For prices, extract numeric values with 2 decimal places
+4. Calculate subtotal by summing all item prices if not shown
+5. CRITICAL: The TOTAL is the final amount paid - look for words like "Total", "Amount Due", "Balance", "Grand Total"
+6. Check all pages for continuation of items or totals on subsequent pages
+7. Distinguish between subtotal, tax, tip, and total carefully
+
+Extract the following and return ONLY a valid JSON object (no markdown, no explanation):
+
+{
+    "merchant_name": "exact business name as shown",
+    "location": "full address or at least city",
+    "date": "YYYY-MM-DD format",
+    "time": "HH:MM format (if available)",
+    "items": [
+        {"name": "exact item name", "price": 12.99, "quantity": 2}
+    ],
+    "subtotal": 0.00,
+    "tax": 0.00,
+    "tip": 0.00,
+    "total": 0.00,
+    "currency": "USD",
+    "category": "food|transport|accommodation|entertainment|shopping",
+    "payment_method": "cash|card|digital"
+}
+
+CRITICAL:
+- items array must include ALL items from the receipt
+- subtotal = sum of all item prices (before tax/tip)
+- total = final amount paid (subtotal + tax + tip)
+- If only total is shown, use that and set subtotal = total
+- Use null for any field not found in the document
+- Do not use bold formatting or include reasoning"""
+
+            contents = [receipt_prompt] + images
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents
+            )
+
+            if response.text:
+                try:
+                    print(f"Raw receipt response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.85
+                    }
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text[:500]
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Receipt extraction error: {str(e)}"}
+
+    async def _extract_hotel_from_pdf_inline(self, images: list) -> dict:
+        """Extract hotel booking details from PDF images."""
+        try:
+            hotel_prompt = """You are a precise hotel booking extraction expert. Carefully read ALL PAGES of this hotel booking confirmation.
+
+INSTRUCTIONS:
+1. Extract hotel name EXACTLY as it appears
+2. Extract full address including city
+3. For dates, convert to YYYY-MM-DD format
+4. For times, use HH:MM format
+5. Calculate nights: check-out date - check-in date
+6. Look for confirmation/booking reference number
+7. Extract total cost and currency
+8. Check all pages for complete information
+
+Extract the following and return ONLY a valid JSON object (no markdown, no explanation):
+
+{
+    "hotel_name": "hotel name",
+    "location": "city and address",
+    "check_in_date": "YYYY-MM-DD",
+    "check_in_time": "HH:MM",
+    "check_out_date": "YYYY-MM-DD",
+    "check_out_time": "HH:MM",
+    "nights": 0,
+    "room_type": "room type",
+    "guests": 0,
+    "booking_reference": "confirmation number",
+    "total_cost": 0.00,
+    "currency": "USD",
+    "guest_name": "guest name"
+}
+
+CRITICAL:
+- Use null for any field not found in the document
+- nights = number of nights stayed (check-out date - check-in date)
+- total_cost = final amount for the entire booking
+- Do not use bold formatting or include reasoning"""
+
+            contents = [hotel_prompt] + images
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents
+            )
+
+            if response.text:
+                try:
+                    print(f"Raw hotel response: {response.text[:500]}")
+                    extracted_data = self._extract_json_from_response(response.text)
+                    return {
+                        "success": True,
+                        "data": extracted_data,
+                        "confidence": 0.8
+                    }
+                except json.JSONDecodeError as e:
+                    print(f"JSON parse error: {str(e)}")
+                    return {
+                        "success": False,
+                        "error": "Could not parse AI response as JSON",
+                        "raw_response": response.text[:500]
+                    }
+            else:
+                return {"success": False, "error": "No response from AI"}
+
+        except Exception as e:
+            return {"success": False, "error": f"Hotel extraction error: {str(e)}"}
 
     async def _extract_flight_from_pdf(self, uploaded_file) -> dict:
         """Extract ALL flight details from PDF using Gemini (including return flights)."""
@@ -735,7 +1101,10 @@ Categories:
 
 Respond with ONLY the category name, nothing else. Do not use bold formatting or include reasoning."""
 
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
             intent = response.text.strip().lower()
 
             # Validate response
@@ -811,7 +1180,10 @@ Do not use bold formatting or include reasoning.
 
 JSON:"""
 
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
             result_json = self._extract_json_from_response(response.text)
 
             if not result_json.get("items"):
@@ -866,7 +1238,10 @@ Do not use bold formatting or include reasoning.
 
 JSON:"""
 
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=prompt
+            )
             result_json = self._extract_json_from_response(response.text)
 
             if not result_json.get("name"):
@@ -903,19 +1278,19 @@ JSON:"""
             return {"response": "AI service not available", "search_queries": [], "grounding_metadata": {}}
 
         try:
-            # Create model with search grounding
-            search_model = genai.GenerativeModel(
-                'gemini-2.5-flash',
-                tools='google_search_retrieval'
-            )
-
-            # Generate with search
+            # Generate with search grounding
             if system_instruction:
                 full_prompt = f"{system_instruction}\n\n{prompt}"
             else:
                 full_prompt = prompt
 
-            response = search_model.generate_content(full_prompt)
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())]
+                )
+            )
 
             # Extract grounding metadata if available
             grounding_metadata = {}
@@ -938,7 +1313,10 @@ JSON:"""
             print(f"Error generating response with search: {e}")
             # Fallback to regular generation
             try:
-                response = self.model.generate_content(prompt)
+                response = self.client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
                 return {
                     "response": response.text,
                     "search_queries": [],
@@ -973,16 +1351,17 @@ JSON:"""
             return {"type": "text_response", "text": "AI service unavailable"}
 
         try:
-            # Create model with tools
-            model = genai.GenerativeModel('gemini-2.5-flash', tools=tools)
-
             # Build prompt with system instruction
             full_prompt = prompt
             if system_instruction:
                 full_prompt = f"{system_instruction}\n\nUser: {prompt}"
 
-            # Generate
-            response = model.generate_content(full_prompt)
+            # Generate with function calling
+            response = self.client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=full_prompt,
+                config=types.GenerateContentConfig(tools=tools)
+            )
 
             # Parse response
             if response.candidates and response.candidates[0].content.parts:

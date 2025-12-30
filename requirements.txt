@@ -1,8 +1,9 @@
 # Telegram Travel Assistant MVP - Minimal Dependencies
 # Simplified for serverless deployment on Vercel
 
-# Core AI service (Gemini Vision OCR + Text Generation)
-google-generativeai>=0.8.0
+# Core AI service (Gemini via Vertex AI - New unified SDK)
+google-genai>=0.2.0
+pypdfium2>=4.30.0
 
 # Database (Supabase PostgreSQL)
 supabase==2.1.0
