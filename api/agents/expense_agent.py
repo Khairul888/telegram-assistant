@@ -15,6 +15,7 @@ class ExpenseAgent(BaseAgent):
         """Execute expense service calls."""
         expense_service = self.services.get('expense')
         settlement_service = self.services.get('settlement')
+        trip_service = self.services.get('trip')
 
         if not expense_service:
             return {"success": False, "error": "Expense service not available"}
@@ -23,18 +24,36 @@ class ExpenseAgent(BaseAgent):
             try:
                 # Validate required fields and prompt user for missing information
                 missing_fields = []
+                missing_field_names = []
 
                 if not args.get("total_amount"):
                     missing_fields.append("the amount spent")
+                    missing_field_names.append("total_amount")
                 if not args.get("paid_by"):
                     missing_fields.append("who paid")
+                    missing_field_names.append("paid_by")
                 if not args.get("merchant_name"):
                     missing_fields.append("what it was for (description)")
+                    missing_field_names.append("merchant_name")
                 if not args.get("split_between") or len(args.get("split_between", [])) == 0:
                     missing_fields.append("who should split this expense")
+                    missing_field_names.append("split_between")
 
-                # If any required fields are missing, prompt the user
+                # If any required fields are missing, store context and prompt the user
                 if missing_fields:
+                    # Store incomplete expense data in session for continuation
+                    if trip_service:
+                        await trip_service.get_or_update_session(
+                            user_id=user_id,
+                            state='awaiting_expense_fields',
+                            context={
+                                'incomplete_expense': args,
+                                'missing_fields': missing_field_names,
+                                'trip_id': trip_id
+                            }
+                        )
+
+                    # Generate helpful prompt
                     if len(missing_fields) == 1:
                         prompt = f"I need to know {missing_fields[0]}. Can you tell me?"
                     elif len(missing_fields) == 2:

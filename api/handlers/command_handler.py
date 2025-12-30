@@ -144,6 +144,124 @@ Commands:
         else:
             return f"❌ Error creating trip: {result.get('error')}"
 
+    async def handle_expense_fields_response(self, user_id: str, user_input: str) -> str:
+        """
+        Handle user response when expense is missing required fields.
+        Continues the expense creation with the new information.
+
+        Args:
+            user_id: Telegram user ID
+            user_input: User's response text
+
+        Returns:
+            str: Response message (success or further prompt)
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id)
+        context = session.get('conversation_context', {})
+        incomplete_expense = context.get('incomplete_expense', {})
+        missing_fields = context.get('missing_fields', [])
+        trip_id = context.get('trip_id')
+
+        if not incomplete_expense or not trip_id:
+            # Session expired
+            await self.trip_service.clear_conversation_state(user_id)
+            return "The expense session has expired. Please start over by telling me about the expense."
+
+        # Try to fill in missing fields from user input
+        user_input_lower = user_input.lower().strip()
+
+        # Determine what field to fill based on what's missing
+        if 'merchant_name' in missing_fields:
+            # User is providing the description/merchant name
+            incomplete_expense['merchant_name'] = user_input
+            missing_fields.remove('merchant_name')
+
+        elif 'split_between' in missing_fields:
+            # User is providing who to split with
+            # Parse as comma-separated names
+            participants = [p.strip() for p in user_input.split(',') if p.strip()]
+            if not participants:
+                # Try as single name
+                participants = [user_input]
+            incomplete_expense['split_between'] = participants
+            missing_fields.remove('split_between')
+
+        elif 'paid_by' in missing_fields:
+            # User is providing who paid
+            incomplete_expense['paid_by'] = user_input
+            missing_fields.remove('paid_by')
+
+        elif 'total_amount' in missing_fields:
+            # User is providing the amount
+            # Extract number from input
+            import re
+            amount_match = re.search(r'[\d.]+', user_input)
+            if amount_match:
+                incomplete_expense['total_amount'] = float(amount_match.group())
+                missing_fields.remove('total_amount')
+            else:
+                return "I couldn't understand the amount. Please provide a number (e.g., 50, 123.45)"
+
+        # Check if we still have missing fields
+        if missing_fields:
+            # Update session with filled data and remaining missing fields
+            await self.trip_service.get_or_update_session(
+                user_id=user_id,
+                state='awaiting_expense_fields',
+                context={
+                    'incomplete_expense': incomplete_expense,
+                    'missing_fields': missing_fields,
+                    'trip_id': trip_id
+                }
+            )
+
+            # Prompt for next missing field
+            field_prompts = {
+                'total_amount': "the amount spent",
+                'paid_by': "who paid",
+                'merchant_name': "what it was for (description)",
+                'split_between': "who should split this expense"
+            }
+
+            next_field = missing_fields[0]
+            return f"Got it! Now I need to know {field_prompts.get(next_field, next_field)}."
+
+        # All fields filled, create the expense
+        result = await self.expense_service.create_expense(
+            user_id=user_id,
+            trip_id=trip_id,
+            merchant_name=incomplete_expense.get('merchant_name', 'Expense'),
+            total_amount=float(incomplete_expense.get('total_amount')),
+            category=incomplete_expense.get('category', 'other'),
+            paid_by=incomplete_expense.get('paid_by'),
+            split_between=incomplete_expense.get('split_between')
+        )
+
+        # Clear conversation state
+        await self.trip_service.clear_conversation_state(user_id)
+
+        if result.get('success'):
+            expense = result.get('expense', {})
+            merchant = expense.get('merchant_name', 'Unknown')
+            amount = expense.get('total_amount', 0)
+            date = expense.get('transaction_date', 'Unknown date')
+            paid_by = expense.get('paid_by', 'Unknown')
+            split_between = expense.get('split_between', [])
+
+            response = f"""Expense added!
+
+💰 {merchant} - ${amount:.2f}
+📅 {date}
+👤 Paid by: {paid_by}"""
+
+            if split_between:
+                response += f"\n👥 Split with: {', '.join(split_between)}"
+
+            return response
+        else:
+            return f"❌ Error creating expense: {result.get('error')}"
+
     async def handle_list_trips(self, user_id: str) -> str:
         """
         Handle /list_trips command.

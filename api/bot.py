@@ -212,6 +212,8 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_location_response(user_id, text)
             elif state == 'awaiting_participants':
                 response = await command_handler.handle_participants_response(user_id, text)
+            elif state == 'awaiting_expense_fields':
+                response = await command_handler.handle_expense_fields_response(user_id, text)
             elif state == 'awaiting_custom_split':
                 response = await command_handler.handle_custom_split_text(user_id, chat_id, text)
             elif state == 'awaiting_edit_amount':
