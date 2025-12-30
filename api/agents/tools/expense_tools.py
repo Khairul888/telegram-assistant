@@ -9,7 +9,7 @@ EXPENSE_TOOLS = [
             "properties": {
                 "merchant_name": {
                     "type": "string",
-                    "description": "Name of the merchant, restaurant, or place where money was spent"
+                    "description": "Name of the merchant, restaurant, or place where money was spent. Use 'Expense' as default if not specified."
                 },
                 "total_amount": {
                     "type": "number",
@@ -18,7 +18,7 @@ EXPENSE_TOOLS = [
                 "category": {
                     "type": "string",
                     "enum": ["food", "transport", "accommodation", "entertainment", "shopping", "other"],
-                    "description": "Category of the expense"
+                    "description": "Category of the expense. Use 'other' if not specified."
                 },
                 "paid_by": {
                     "type": "string",
@@ -27,10 +27,10 @@ EXPENSE_TOOLS = [
                 "split_between": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of people to split this expense between (including the payer)"
+                    "description": "List of people to split this expense between (including the payer). If user says 'everyone' or 'all', include all trip participants."
                 }
             },
-            "required": ["merchant_name", "total_amount"]
+            "required": ["total_amount", "paid_by"]
         }
     },
     {

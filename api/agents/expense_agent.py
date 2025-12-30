@@ -24,7 +24,7 @@ class ExpenseAgent(BaseAgent):
                 result = await expense_service.create_expense(
                     user_id=user_id,
                     trip_id=trip_id,
-                    merchant_name=args.get("merchant_name"),
+                    merchant_name=args.get("merchant_name", "Expense"),
                     total_amount=float(args.get("total_amount")),
                     category=args.get("category", "other"),
                     paid_by=args.get("paid_by"),
@@ -32,6 +32,7 @@ class ExpenseAgent(BaseAgent):
                 )
                 return result
             except Exception as e:
+                print(f"Error creating expense: {e}")
                 return {"success": False, "error": str(e)}
 
         elif function_name == "list_expenses":
