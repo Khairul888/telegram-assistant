@@ -288,6 +288,22 @@ class handler(BaseHTTPRequestHandler):
             else:
                 # Conversational handling (only if no active state)
                 if not state:
+                    # In group chats, only respond to @mentions or replies to bot
+                    # Skip conversational AI for regular group messages
+                    if chat_type in ['group', 'supergroup']:
+                        # Check if message is a reply to bot or mentions bot
+                        is_reply_to_bot = message.get('reply_to_message', {}).get('from', {}).get('is_bot', False)
+                        # Check for @bot_username mentions
+                        entities = message.get('entities', [])
+                        mentions_bot = any(
+                            entity.get('type') == 'mention' or entity.get('type') == 'text_mention'
+                            for entity in entities
+                        )
+
+                        # Skip if not directed at bot
+                        if not is_reply_to_bot and not mentions_bot:
+                            return  # Ignore regular group messages
+
                     trip = await trip_service.get_current_trip(user_id, chat_id)
                     if trip:
                         # NEW: Agent-based routing (feature-flag controlled)
