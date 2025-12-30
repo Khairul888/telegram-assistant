@@ -47,7 +47,7 @@ This project is a **custom FastAPI application** that replicates and enhances th
 
 ### AI/ML Services
 - **Google Gemini 2.0 Flash (Experimental)**: Primary language model for text analysis and chat interactions
-  - Model: `models/gemini-2.0-flash-exp`
+  - Model: `models/gemini-2.5-flash`
   - Temperature: 0.4 for analysis, max 8192 output tokens for chat
 - **Google Gemini Embeddings**: Vector embeddings for semantic search and document similarity
 

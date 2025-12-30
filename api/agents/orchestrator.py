@@ -53,7 +53,7 @@ Available agents:
 - trip: Handle trip creation, participants, location changes, switching trips
 - qa: Handle general questions about the trip (what, when, where, how, weather)
 
-Respond with ONLY the agent name (expense, itinerary, places, settlement, trip, or qa), nothing else."""
+Respond with ONLY the agent name (expense, itinerary, places, settlement, trip, or qa), nothing else. Do not use bold formatting."""
 
         try:
             response = await self.gemini.generate_response(prompt)

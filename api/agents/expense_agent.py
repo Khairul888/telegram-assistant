@@ -164,10 +164,37 @@ class ExpenseAgent(BaseAgent):
                 merchant = exp.get('merchant_name', 'Unknown')
                 amount = exp.get('total_amount', 0)
                 category = exp.get('category', 'other')
-                lines.append(f"• {merchant} - ${amount:.2f} ({category})")
+                paid_by = exp.get('paid_by', 'Unknown')
+                date = exp.get('transaction_date', '')
+
+                # Build the main expense line
+                expense_line = f"• {merchant} - ${amount:.2f} ({category})"
+                if date:
+                    expense_line += f" - {date}"
+                lines.append(expense_line)
+
+                # Add payer info
+                lines.append(f"  Paid by: {paid_by}")
+
+                # Add per-person breakdown if available
+                split_amounts = exp.get('split_amounts')
+                if split_amounts and isinstance(split_amounts, dict):
+                    lines.append("  Owed by:")
+                    for person, person_amount in split_amounts.items():
+                        lines.append(f"    - {person}: ${person_amount:.2f}")
+                elif exp.get('split_between'):
+                    # Fallback: calculate equal split if split_amounts not available
+                    split_between = exp.get('split_between', [])
+                    if split_between:
+                        per_person = amount / len(split_between)
+                        lines.append("  Split equally among:")
+                        for person in split_between:
+                            lines.append(f"    - {person}: ${per_person:.2f}")
+
+                lines.append("")  # Add blank line between expenses
 
             if len(expenses) > 10:
-                lines.append(f"\n...and {len(expenses) - 10} more expenses")
+                lines.append(f"...and {len(expenses) - 10} more expenses")
 
             return "\n".join(lines)
 

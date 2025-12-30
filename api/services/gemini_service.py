@@ -20,7 +20,7 @@ class GeminiService:
             api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
             if api_key:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-2.0-flash-exp')
+                self.model = genai.GenerativeModel('gemini-2.5-flash')
                 self.available = True
             else:
                 self.available = False
@@ -203,8 +203,10 @@ Return ONLY a valid JSON object with these fields (use null for missing informat
     "flight_number": "flight code",
     "departure_city": "departure city name",
     "departure_airport": "departure airport code",
+    "departure_terminal": "departure terminal (e.g., Terminal 1, Terminal A, T2)",
     "arrival_city": "arrival city name",
     "arrival_airport": "arrival airport code",
+    "arrival_terminal": "arrival terminal (e.g., Terminal 3, Terminal B, T4)",
     "departure_date": "YYYY-MM-DD",
     "departure_time": "HH:MM",
     "arrival_date": "YYYY-MM-DD",
@@ -903,7 +905,7 @@ JSON:"""
         try:
             # Create model with search grounding
             search_model = genai.GenerativeModel(
-                'gemini-2.0-flash-exp',
+                'gemini-2.5-flash',
                 tools='google_search_retrieval'
             )
 
@@ -972,7 +974,7 @@ JSON:"""
 
         try:
             # Create model with tools
-            model = genai.GenerativeModel('gemini-2.0-flash-exp', tools=tools)
+            model = genai.GenerativeModel('gemini-2.5-flash', tools=tools)
 
             # Build prompt with system instruction
             full_prompt = prompt

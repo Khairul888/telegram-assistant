@@ -122,6 +122,10 @@ Answer the user's question based on this trip information. If you don't have the
                         flight_info += f", seat {event['seat']}"
                     if event.get('gate'):
                         flight_info += f", gate {event['gate']}"
+                    if event.get('departure_terminal'):
+                        flight_info += f", departure terminal {event['departure_terminal']}"
+                    if event.get('arrival_terminal'):
+                        flight_info += f", arrival terminal {event['arrival_terminal']}"
                     context_parts.append(flight_info)
 
                 elif event['event_type'] == 'hotel':
