@@ -21,6 +21,29 @@ class ExpenseAgent(BaseAgent):
 
         if function_name == "create_expense":
             try:
+                # Validate required fields and prompt user for missing information
+                missing_fields = []
+
+                if not args.get("total_amount"):
+                    missing_fields.append("the amount spent")
+                if not args.get("paid_by"):
+                    missing_fields.append("who paid")
+                if not args.get("merchant_name"):
+                    missing_fields.append("what it was for (description)")
+                if not args.get("split_between") or len(args.get("split_between", [])) == 0:
+                    missing_fields.append("who should split this expense")
+
+                # If any required fields are missing, prompt the user
+                if missing_fields:
+                    if len(missing_fields) == 1:
+                        prompt = f"I need to know {missing_fields[0]}. Can you tell me?"
+                    elif len(missing_fields) == 2:
+                        prompt = f"I need to know {missing_fields[0]} and {missing_fields[1]}. Can you provide this information?"
+                    else:
+                        prompt = f"I need a few more details: {', '.join(missing_fields[:-1])}, and {missing_fields[-1]}. Can you provide this information?"
+
+                    return {"success": False, "error": prompt}
+
                 result = await expense_service.create_expense(
                     user_id=user_id,
                     trip_id=trip_id,

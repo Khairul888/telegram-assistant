@@ -30,7 +30,7 @@ EXPENSE_TOOLS = [
                     "description": "List of people to split this expense between (including the payer). If user says 'everyone' or 'all', include all trip participants."
                 }
             },
-            "required": ["total_amount", "paid_by"]
+            "required": ["total_amount", "paid_by", "merchant_name", "split_between"]
         }
     },
     {

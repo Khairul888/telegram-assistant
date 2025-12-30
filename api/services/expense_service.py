@@ -31,6 +31,16 @@ class ExpenseService:
             dict: {"success": bool, "expense_id": int, "expense": dict} or error
         """
         try:
+            # Calculate split_amounts if split_between is provided
+            split_amounts = None
+            if split_between and len(split_between) > 0:
+                # Equal split among all participants
+                per_person = round(float(total_amount) / len(split_between), 2)
+                split_amounts = {
+                    participant: per_person
+                    for participant in split_between
+                }
+
             expense_data = {
                 "user_id": user_id,
                 "trip_id": trip_id,
@@ -40,7 +50,8 @@ class ExpenseService:
                 "transaction_date": transaction_date,
                 "currency": "USD",
                 "paid_by": paid_by,
-                "split_between": split_between
+                "split_between": split_between,
+                "split_amounts": split_amounts
             }
 
             result = self.supabase.table('expenses').insert(expense_data).execute()
