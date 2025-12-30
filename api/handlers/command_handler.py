@@ -605,7 +605,13 @@ Tips:"""
   - Any group member can create and access trips
   - Use /switch_trip to change active trip
   - Participants are simple names (not Telegram accounts)
-  - Latest trip is automatically active"""
+  - Latest trip is automatically active
+
+💬 HOW TO TALK TO ME IN GROUPS:
+  - Commands work directly: Just type /balance or /add_expense
+  - Natural language needs @mention: "@bot_name I paid $50 for coffee"
+  - Or reply to my messages for natural conversations
+  - I'll ignore regular chat so I don't spam the group!"""
         else:
             base_help += """
   - Latest trip is automatically active
