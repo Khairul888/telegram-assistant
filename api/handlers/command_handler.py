@@ -609,6 +609,8 @@ Tips:"""
 
 💬 HOW TO TALK TO ME IN GROUPS:
   - Commands work directly: Just type /balance or /add_expense
+  - Multi-step commands: @mention me or reply to my messages
+    Example: /new_trip Tokyo → then @mention "Tokyo, Japan" for location
   - Natural language needs @mention: "@bot_name I paid $50 for coffee"
   - Or reply to my messages for natural conversations
   - I'll ignore regular chat so I don't spam the group!"""
