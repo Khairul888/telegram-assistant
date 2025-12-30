@@ -127,6 +127,29 @@ class TripService:
             print(f"Error listing trips: {e}")
             return []
 
+    async def get_trip_by_id(self, trip_id: int) -> Optional[Dict]:
+        """
+        Get trip by ID.
+
+        Args:
+            trip_id: Trip ID
+
+        Returns:
+            dict: Trip data or None if not found
+        """
+        try:
+            result = self.supabase.table('trips')\
+                .select('*')\
+                .eq('id', trip_id)\
+                .execute()
+
+            if result.data and len(result.data) > 0:
+                return result.data[0]
+            return None
+        except Exception as e:
+            print(f"Error getting trip by ID: {e}")
+            return None
+
     async def update_trip_activity(self, trip_id: int):
         """
         Update last_activity_at timestamp for trip.

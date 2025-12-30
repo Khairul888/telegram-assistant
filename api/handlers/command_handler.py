@@ -168,6 +168,10 @@ Commands:
             await self.trip_service.clear_conversation_state(user_id)
             return "The expense session has expired. Please start over by telling me about the expense."
 
+        # Get trip info for context
+        trip = await self.trip_service.get_trip_by_id(trip_id)
+        trip_participants = trip.get('participants', []) if trip else []
+
         # Try to fill in missing fields from user input
         user_input_lower = user_input.lower().strip()
 
@@ -177,20 +181,89 @@ Commands:
             incomplete_expense['merchant_name'] = user_input
             missing_fields.remove('merchant_name')
 
-        elif 'split_between' in missing_fields:
-            # User is providing who to split with
-            # Parse as comma-separated names
-            participants = [p.strip() for p in user_input.split(',') if p.strip()]
-            if not participants:
-                # Try as single name
-                participants = [user_input]
-            incomplete_expense['split_between'] = participants
-            missing_fields.remove('split_between')
+        elif 'split_between' in missing_fields or 'paid_by' in missing_fields:
+            # User is providing expense split information (possibly combined with payer info)
+            # Use AI to parse the natural language response
+            from api.services.gemini_service import GeminiService
+            gemini = GeminiService()
 
-        elif 'paid_by' in missing_fields:
-            # User is providing who paid
-            incomplete_expense['paid_by'] = user_input
-            missing_fields.remove('paid_by')
+            # Build prompt for AI to extract information
+            participants_str = ', '.join(trip_participants) if trip_participants else 'No participants set'
+            prompt = f"""Parse this expense split information and extract who paid and who to split with.
+
+Trip participants: {participants_str}
+
+User said: "{user_input}"
+
+Extract:
+1. Who paid (the payer's name)
+2. List of people to split the expense between
+
+Rules:
+- If user says "everyone", "all", "split evenly", etc., include ALL trip participants
+- If user mentions specific names, use only those names
+- The payer should always be included in the split list
+- Return names exactly as they appear in the trip participants list when possible
+- If a name isn't in the participants list, use the name as provided by the user
+
+Return a JSON object with:
+- "paid_by": the payer's name (string)
+- "split_between": array of participant names
+
+Example responses:
+Input: "Khairul paid, split evenly amongst everyone"
+Output: {{"paid_by": "Khairul", "split_between": ["Khairul", "Alice", "Bob"]}}
+
+Input: "Alice paid, split with Bob and Carol"
+Output: {{"paid_by": "Alice", "split_between": ["Alice", "Bob", "Carol"]}}
+
+Input: "split with everyone" (if paid_by is already known)
+Output: {{"split_between": ["Khairul", "Alice", "Bob"]}}"""
+
+            result = await gemini.generate_response(prompt, system_instruction="You are a JSON extractor. Return only valid JSON, no other text.")
+
+            try:
+                import json
+                import re
+                # Extract JSON from response
+                json_match = re.search(r'\{.*\}', result, re.DOTALL)
+                if json_match:
+                    parsed = json.loads(json_match.group())
+
+                    # Fill in paid_by if extracted and missing
+                    if 'paid_by' in missing_fields and parsed.get('paid_by'):
+                        incomplete_expense['paid_by'] = parsed['paid_by']
+                        missing_fields.remove('paid_by')
+
+                    # Fill in split_between if extracted and missing
+                    if 'split_between' in missing_fields and parsed.get('split_between'):
+                        incomplete_expense['split_between'] = parsed['split_between']
+                        missing_fields.remove('split_between')
+                else:
+                    # Fallback to simple comma parsing
+                    participants = [p.strip() for p in user_input.split(',') if p.strip()]
+                    if not participants:
+                        participants = [user_input]
+
+                    if 'split_between' in missing_fields:
+                        incomplete_expense['split_between'] = participants
+                        missing_fields.remove('split_between')
+                    elif 'paid_by' in missing_fields:
+                        incomplete_expense['paid_by'] = participants[0] if participants else user_input
+                        missing_fields.remove('paid_by')
+
+            except Exception as e:
+                print(f"Error parsing expense split info: {e}")
+                # Fallback to simple parsing
+                if 'split_between' in missing_fields:
+                    participants = [p.strip() for p in user_input.split(',') if p.strip()]
+                    if not participants:
+                        participants = [user_input]
+                    incomplete_expense['split_between'] = participants
+                    missing_fields.remove('split_between')
+                elif 'paid_by' in missing_fields:
+                    incomplete_expense['paid_by'] = user_input
+                    missing_fields.remove('paid_by')
 
         elif 'total_amount' in missing_fields:
             # User is providing the amount
