@@ -9,7 +9,7 @@ EXPENSE_TOOLS = [
             "properties": {
                 "merchant_name": {
                     "type": "string",
-                    "description": "Name of the merchant, restaurant, or place where money was spent. Use 'Expense' as default if not specified."
+                    "description": "Name of the merchant, restaurant, or place where money was spent. IMPORTANT: Always try to extract this from the message (e.g., 'dinner', 'Starbucks', 'Uber', etc.). If truly not mentioned, omit this field so the system can prompt the user."
                 },
                 "total_amount": {
                     "type": "number",
@@ -27,10 +27,10 @@ EXPENSE_TOOLS = [
                 "split_between": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of people to split this expense between (including the payer). If user says 'everyone' or 'all', include all trip participants."
+                    "description": "List of people to split this expense between (including the payer). If user says 'everyone' or 'all', include all trip participants. IMPORTANT: If not specified, omit this field so the system can prompt the user."
                 }
             },
-            "required": ["total_amount", "paid_by", "merchant_name", "split_between"]
+            "required": ["total_amount", "paid_by"]
         }
     },
     {

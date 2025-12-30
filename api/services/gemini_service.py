@@ -1336,7 +1336,7 @@ JSON:"""
 
         Args:
             prompt: User message
-            tools: List of function declarations
+            tools: List of function declarations (old JSON schema format)
             system_instruction: Optional context
 
         Returns:
@@ -1356,11 +1356,25 @@ JSON:"""
             if system_instruction:
                 full_prompt = f"{system_instruction}\n\nUser: {prompt}"
 
+            # Convert old tool format to new google-genai format
+            function_declarations = []
+            for tool in tools:
+                function_declarations.append(
+                    types.FunctionDeclaration(
+                        name=tool["name"],
+                        description=tool["description"],
+                        parameters=tool["parameters"]
+                    )
+                )
+
+            # Create Tool with function declarations
+            sdk_tools = [types.Tool(function_declarations=function_declarations)]
+
             # Generate with function calling
             response = self.client.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=full_prompt,
-                config=types.GenerateContentConfig(tools=tools)
+                config=types.GenerateContentConfig(tools=sdk_tools)
             )
 
             # Parse response
