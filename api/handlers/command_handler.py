@@ -635,7 +635,7 @@ Tips:"""
             dict: {"response": str or None, "keyboard": dict or None}
         """
         # Check active trip
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return {
                 "response": """No active trip found!
@@ -751,7 +751,7 @@ Who paid? Reply with one of: {participants_list}""",
             dict: {response: str or None, keyboard: dict or None}
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         amount = context.get('expense_amount')
@@ -763,7 +763,7 @@ Who paid? Reply with one of: {participants_list}""",
             return {"response": "Error: Expense session expired. Please start over with /add_expense", "keyboard": None}
 
         # Get trip to get participants
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return {"response": "Error: Trip not found", "keyboard": None}
 
@@ -774,6 +774,7 @@ Who paid? Reply with one of: {participants_list}""",
         context['participants_selected'] = []  # Track selected participants
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_expense_participants',
             context=context
         )
@@ -818,7 +819,7 @@ Select all who should split this expense:"""
             dict: {response: str or None, keyboard: dict or None}
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         participants_selected = context.get('participants_selected', [])
@@ -834,10 +835,10 @@ Select all who should split this expense:"""
 
         # Update session
         context['participants_selected'] = participants_selected
-        await self.trip_service.get_or_update_session(user_id, context=context)
+        await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
 
         # Get trip for all participants
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         all_participants = trip.get('participants', [])
 
         # Rebuild keyboard with updated checkboxes
@@ -877,7 +878,7 @@ Select all who should split this expense:"""
             dict: {response: str or None, keyboard: dict or None}
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         participants_selected = context.get('participants_selected', [])
@@ -891,6 +892,7 @@ Select all who should split this expense:"""
         # Update state to split type selection
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_split_type',
             context=context
         )
@@ -933,7 +935,7 @@ How should this be split?"""
             dict: {response: str or None, keyboard: dict or None}
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         participants_selected = context.get('participants_selected', [])
@@ -981,7 +983,7 @@ How should this be split?"""
             running = await self.settlement_service.calculate_running_balance(trip_id)
 
             # Clear conversation state
-            await self.trip_service.clear_conversation_state(user_id)
+            await self.trip_service.clear_conversation_state(user_id, chat_id)
 
             return {"response": f"""✅ Expense added!
 
@@ -1033,7 +1035,7 @@ Example: {50 if split_type == 'percent' else round(amount / len(participants_sel
             str: Response message
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         participants_selected = context.get('participants_selected', [])
@@ -1141,7 +1143,7 @@ Enter {next_participant}'s share:"""
             running = await self.settlement_service.calculate_running_balance(trip_id)
 
             # Clear conversation state
-            await self.trip_service.clear_conversation_state(user_id)
+            await self.trip_service.clear_conversation_state(user_id, chat_id)
 
             # Format split details
             split_details = '\n'.join([
@@ -1175,7 +1177,7 @@ Use /balance to see running balance anytime."""
         Returns:
             dict: {response: str or None, keyboard: dict or None}
         """
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return {
                 "response": "No active trip. Create one with /new_trip",

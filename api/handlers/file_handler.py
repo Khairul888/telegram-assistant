@@ -38,7 +38,7 @@ class FileHandler:
             dict: {"response": str or None, "keyboard": dict or None}
         """
         # Get current trip
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return {
                 "response": """❌ No active trip found!
@@ -360,7 +360,7 @@ You can ask me questions about this document later.""",
             dict: {"response": str or None, "keyboard": dict or None}
         """
         # Get session context
-        session = await self.trip_service.get_or_update_session(user_id)
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
         context = session.get('conversation_context', {})
 
         amount = context.get('expense_amount')
@@ -368,7 +368,7 @@ You can ask me questions about this document later.""",
         trip_id = context.get('trip_id')
 
         # Get trip to get participants
-        trip = await self.trip_service.get_current_trip(user_id)
+        trip = await self.trip_service.get_current_trip(user_id, chat_id)
         if not trip:
             return {"response": "Error: Trip not found", "keyboard": None}
 
@@ -379,6 +379,7 @@ You can ask me questions about this document later.""",
         context['participants_selected'] = []
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_expense_participants',
             context=context
         )

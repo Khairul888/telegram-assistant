@@ -113,7 +113,7 @@ Would you like me to save this to your trip schedule?"""
         """
         try:
             # Get session context
-            session = await self.trips.get_or_update_session(user_id)
+            session = await self.trips.get_or_update_session(user_id, chat_id)
             context = session.get('conversation_context', {})
 
             items = context.get('itinerary_items', [])
@@ -121,11 +121,11 @@ Would you like me to save this to your trip schedule?"""
 
             if not confirmed:
                 # Clear session
-                await self.trips.clear_conversation_state(user_id)
+                await self.trips.clear_conversation_state(user_id, chat_id)
                 return "Itinerary cancelled. No changes made."
 
             if not items or not trip_id:
-                await self.trips.clear_conversation_state(user_id)
+                await self.trips.clear_conversation_state(user_id, chat_id)
                 return "Error: Itinerary data not found. Please try again."
 
             # Save itinerary items
@@ -134,7 +134,7 @@ Would you like me to save this to your trip schedule?"""
             )
 
             # Clear session
-            await self.trips.clear_conversation_state(user_id)
+            await self.trips.clear_conversation_state(user_id, chat_id)
 
             if result.get("success"):
                 count = result.get("count", 0)
@@ -146,7 +146,7 @@ View anytime with /itinerary"""
                 return f"❌ Error saving itinerary: {result.get('error')}"
 
         except Exception as e:
-            await self.trips.clear_conversation_state(user_id)
+            await self.trips.clear_conversation_state(user_id, chat_id)
             return f"❌ Error: {str(e)}"
 
     async def handle_place_detection(self, user_id: str, chat_id: str,
@@ -244,7 +244,7 @@ What type of place is this?"""
         """
         try:
             # Get session context
-            session = await self.trips.get_or_update_session(user_id)
+            session = await self.trips.get_or_update_session(user_id, chat_id)
             context = session.get('conversation_context', {})
 
             place_name = context.get('place_name')
@@ -252,7 +252,7 @@ What type of place is this?"""
             trip_id = context.get('trip_id')
 
             if not place_name or not trip_id:
-                await self.trips.clear_conversation_state(user_id)
+                await self.trips.clear_conversation_state(user_id, chat_id)
                 return "Error: Place data not found. Please try again."
 
             # Save place to wishlist
@@ -261,7 +261,7 @@ What type of place is this?"""
             )
 
             # Clear session
-            await self.trips.clear_conversation_state(user_id)
+            await self.trips.clear_conversation_state(user_id, chat_id)
 
             if result.get("success"):
                 category_emoji = {
@@ -282,7 +282,7 @@ View your full wishlist with /wishlist"""
                 return f"❌ Error saving place: {result.get('error')}"
 
         except Exception as e:
-            await self.trips.clear_conversation_state(user_id)
+            await self.trips.clear_conversation_state(user_id, chat_id)
             return f"❌ Error: {str(e)}"
 
     async def handle_google_maps_url(self, user_id: str, chat_id: str,
