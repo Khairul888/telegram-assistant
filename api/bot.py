@@ -89,6 +89,10 @@ def initialize_services():
 
         if agents_enabled:
             from api.agents.expense_agent import ExpenseAgent
+            from api.agents.itinerary_agent import ItineraryAgent
+            from api.agents.places_agent import PlacesAgent
+            from api.agents.settlement_agent import SettlementAgent
+            from api.agents.trip_agent import TripAgent
             from api.agents.router import KeywordRouter
             from api.agents.orchestrator import OrchestratorAgent
 
@@ -100,19 +104,25 @@ def initialize_services():
                 'places': places_service
             }
 
-            # Initialize just ExpenseAgent for Phase 3 PoC
+            # Initialize all agents (Phase 4 - Complete)
             expense_agent = ExpenseAgent(gemini, services_dict, telegram_utils)
+            itinerary_agent = ItineraryAgent(gemini, services_dict, telegram_utils)
+            places_agent = PlacesAgent(gemini, services_dict, telegram_utils)
+            settlement_agent = SettlementAgent(gemini, services_dict, telegram_utils)
+            trip_agent = TripAgent(gemini, services_dict, telegram_utils)
 
-            # Placeholder for other agents (Phase 4)
             agents = {
-                'expense': expense_agent
-                # Other agents will be added in Phase 4
+                'expense': expense_agent,
+                'itinerary': itinerary_agent,
+                'places': places_agent,
+                'settlement': settlement_agent,
+                'trip': trip_agent
             }
 
             orchestrator = OrchestratorAgent(gemini, services_dict, telegram_utils)
             router = KeywordRouter(agents, orchestrator)
 
-            print("Agents initialized (ExpenseAgent only)")
+            print("Agents initialized: expense, itinerary, places, settlement, trip")
 
         _services_initialized = True
         print("Services initialized successfully")

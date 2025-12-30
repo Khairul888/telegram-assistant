@@ -286,3 +286,4 @@ local_config.py
 debug_output/
 experiments/
 .vercel
+.env.vercel
