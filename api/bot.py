@@ -209,6 +209,13 @@ class handler(BaseHTTPRequestHandler):
                 authorized_groups_str = os.getenv('TELEGRAM_GROUP_IDS', '')
                 authorized_groups = [g.strip() for g in authorized_groups_str.split(',') if g.strip()]
 
+                # Debug logging
+                print(f"Group authorization check:")
+                print(f"  Received chat_id: '{chat_id}' (type: {type(chat_id).__name__})")
+                print(f"  Authorized groups env: '{authorized_groups_str}'")
+                print(f"  Parsed authorized list: {authorized_groups}")
+                print(f"  Is authorized: {chat_id in authorized_groups if authorized_groups else 'empty list - allowing all'}")
+
                 if authorized_groups and chat_id not in authorized_groups:
                     print(f"Unauthorized group: {chat_id}")
                     await telegram_utils.send_message(
