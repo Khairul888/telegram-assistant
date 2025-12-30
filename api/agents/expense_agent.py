@@ -45,6 +45,7 @@ class ExpenseAgent(BaseAgent):
                     if trip_service:
                         await trip_service.get_or_update_session(
                             user_id=user_id,
+                            chat_id=chat_id,
                             state='awaiting_expense_fields',
                             context={
                                 'incomplete_expense': args,

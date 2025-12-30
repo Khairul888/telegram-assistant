@@ -127,6 +127,7 @@ Create a trip first: /new_trip <trip name>""",
         # Store expense info in session for later use
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_receipt_payer',
             context={
                 'expense_id': expense_id,

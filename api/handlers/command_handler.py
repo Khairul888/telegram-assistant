@@ -695,6 +695,7 @@ Examples:
         # Store in session context
         await self.trip_service.get_or_update_session(
             user_id,
+            chat_id,
             state='awaiting_expense_payer',
             context={
                 'expense_id': expense_id,
@@ -1067,7 +1068,7 @@ Example: {50 if split_type == 'percent' else round(amount / len(participants_sel
             # Ask for next participant
             context['custom_splits'] = custom_splits
             context['current_participant_index'] = current_index
-            await self.trip_service.get_or_update_session(user_id, context=context)
+            await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
 
             next_participant = participants_selected[current_index]
             split_unit = "%" if split_type == 'percent' else "$"

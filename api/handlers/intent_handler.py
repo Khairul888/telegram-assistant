@@ -62,6 +62,7 @@ class IntentHandler:
             # Store in session for confirmation
             await self.trips.get_or_update_session(
                 user_id,
+                chat_id,
                 state='awaiting_itinerary_confirmation',
                 context={
                     'itinerary_items': items,
@@ -185,6 +186,7 @@ View anytime with /itinerary"""
             # Store in session
             await self.trips.get_or_update_session(
                 user_id,
+                chat_id,
                 state='awaiting_place_category',
                 context={
                     'place_name': place_name,
