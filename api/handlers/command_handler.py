@@ -1001,23 +1001,29 @@ How should this be split?"""
 Use /balance to see running balance anytime.""", "keyboard": None}
 
         elif split_type in ['percent', 'amount']:
-            # Custom split - ask for amounts/percentages
+            # Custom split - ask for all amounts/percentages at once
             context['split_type'] = split_type
-            context['custom_splits'] = {}
-            context['current_participant_index'] = 0
 
             await self.trip_service.get_or_update_session(
                 user_id,
+                chat_id,
                 state='awaiting_custom_split',
                 context=context
             )
 
-            first_participant = participants_selected[0]
             split_unit = "%" if split_type == 'percent' else "$"
+            participant_list = ", ".join(participants_selected)
 
-            return {"response": f"""Enter {first_participant}'s share as a number:
+            # Generate example values
+            if split_type == 'percent':
+                example_values = " ".join([str(100 // len(participants_selected))] * len(participants_selected))
+            else:
+                per_person = round(amount / len(participants_selected), 2)
+                example_values = " ".join([str(per_person)] * len(participants_selected))
 
-Example: {50 if split_type == 'percent' else round(amount / len(participants_selected), 2)}
+            return {"response": f"""Enter shares for {participant_list} (space or comma-separated):
+
+Example: {example_values}
 
 (Total: ${amount:.2f})""", "keyboard": None}
 
@@ -1030,7 +1036,7 @@ Example: {50 if split_type == 'percent' else round(amount / len(participants_sel
         Args:
             user_id: Telegram user ID
             chat_id: Telegram chat ID
-            text: User input (number)
+            text: User input (space or comma-separated numbers)
 
         Returns:
             str: Response message
@@ -1041,117 +1047,96 @@ Example: {50 if split_type == 'percent' else round(amount / len(participants_sel
 
         participants_selected = context.get('participants_selected', [])
         split_type = context.get('split_type')
-        custom_splits = context.get('custom_splits', {})
-        current_index = context.get('current_participant_index', 0)
         amount = context.get('expense_amount')
         description = context.get('expense_description')
         paid_by = context.get('paid_by')
         trip_id = context.get('trip_id')
         expense_id = context.get('expense_id')
 
-        # Parse input
+        # Parse all values from space or comma-separated input
+        values_text = text.replace(',', ' ')
+        values_str = values_text.split()
+
+        # Validate count
+        if len(values_str) != len(participants_selected):
+            participant_list = ", ".join(participants_selected)
+            return f"Please provide {len(participants_selected)} values for {participant_list}"
+
+        # Parse values
         try:
-            value = float(text.strip())
-            if value < 0:
-                return "Please enter a positive number."
+            values = [float(v.strip()) for v in values_str]
+            if any(v < 0 for v in values):
+                return "All values must be positive numbers."
         except ValueError:
-            return "Invalid number. Please enter a valid amount."
+            return "Invalid input. Please enter numbers only (space or comma-separated)."
 
-        # Store split for current participant
-        current_participant = participants_selected[current_index]
-        custom_splits[current_participant] = value
+        # Create splits dict
+        custom_splits = {p: v for p, v in zip(participants_selected, values)}
 
-        # Move to next participant
-        current_index += 1
+        # All participants done - validate and complete
+        from datetime import datetime
 
-        if current_index < len(participants_selected):
-            # Ask for next participant
-            context['custom_splits'] = custom_splits
-            context['current_participant_index'] = current_index
-            await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
+        # Validate splits
+        if split_type == 'percent':
+            total = sum(values)
+            if abs(total - 100) > 0.01:
+                return f"Error: Percentages must add up to 100%. Current total: {total}%"
 
-            next_participant = participants_selected[current_index]
-            split_unit = "%" if split_type == 'percent' else "$"
-
-            # Show progress
-            if split_type == 'percent':
-                total_so_far = sum(custom_splits.values())
-                remaining = 100 - total_so_far
-                progress = f"\nSo far: {total_so_far}% assigned, {remaining}% remaining"
-            else:
-                total_so_far = sum(custom_splits.values())
-                remaining = amount - total_so_far
-                progress = f"\nSo far: ${total_so_far:.2f} assigned, ${remaining:.2f} remaining"
-
-            return f"""✅ {current_participant}: {value}{split_unit}{progress}
-
-Enter {next_participant}'s share:"""
-
+            # Convert percentages to amounts
+            split_amounts = {
+                p: round(amount * (pct / 100), 2)
+                for p, pct in custom_splits.items()
+            }
         else:
-            # All participants done - validate and complete
-            from datetime import datetime
+            total = sum(values)
+            if abs(total - amount) > 0.01:
+                return f"Error: Amounts must add up to ${amount:.2f}. Current total: ${total:.2f}"
 
-            # Validate splits
-            if split_type == 'percent':
-                total = sum(custom_splits.values())
-                if abs(total - 100) > 0.01:
-                    return f"Error: Percentages must add up to 100%. Current total: {total}%"
+            split_amounts = custom_splits
 
-                # Convert percentages to amounts
-                split_amounts = {
-                    p: round(amount * (pct / 100), 2)
-                    for p, pct in custom_splits.items()
-                }
-            else:
-                total = sum(custom_splits.values())
-                if abs(total - amount) > 0.01:
-                    return f"Error: Amounts must add up to ${amount:.2f}. Current total: ${total:.2f}"
-
-                split_amounts = custom_splits
-
-            # Create or get expense
-            if not expense_id:
-                result = await self.expense_service.create_expense(
-                    user_id=user_id,
-                    trip_id=trip_id,
-                    merchant_name=description,
-                    total_amount=amount,
-                    paid_by=paid_by,
-                    split_between=participants_selected,
-                    transaction_date=datetime.now().date().isoformat()
-                )
-                if not result.get("success"):
-                    return f"Error creating expense: {result.get('error')}"
-                expense_id = result['expense_id']
-
-            # Update expense with custom split
-            update_result = await self.expense_service.update_expense_split(
-                expense_id,
-                paid_by,
-                split_type,
-                participants_selected,
-                amount,
-                split_amounts  # Pass the calculated split amounts
+        # Create or get expense
+        if not expense_id:
+            result = await self.expense_service.create_expense(
+                user_id=user_id,
+                trip_id=trip_id,
+                merchant_name=description,
+                total_amount=amount,
+                paid_by=paid_by,
+                split_between=participants_selected,
+                transaction_date=datetime.now().date().isoformat()
             )
+            if not result.get("success"):
+                return f"Error creating expense: {result.get('error')}"
+            expense_id = result['expense_id']
 
-            if not update_result.get("success"):
-                return f"Error updating split: {update_result.get('error')}"
+        # Update expense with custom split
+        update_result = await self.expense_service.update_expense_split(
+            expense_id,
+            paid_by,
+            split_type,
+            participants_selected,
+            amount,
+            split_amounts  # Pass the calculated split amounts
+        )
 
-            # Calculate settlements
-            immediate = self.settlement_service.calculate_immediate_settlement(
-                amount, paid_by, split_amounts
-            )
-            running = await self.settlement_service.calculate_running_balance(trip_id)
+        if not update_result.get("success"):
+            return f"Error updating split: {update_result.get('error')}"
 
-            # Clear conversation state
-            await self.trip_service.clear_conversation_state(user_id, chat_id)
+        # Calculate settlements
+        immediate = self.settlement_service.calculate_immediate_settlement(
+            amount, paid_by, split_amounts
+        )
+        running = await self.settlement_service.calculate_running_balance(trip_id)
 
-            # Format split details
-            split_details = '\n'.join([
-                f"  • {p}: ${amt:.2f}" for p, amt in split_amounts.items()
-            ])
+        # Clear conversation state
+        await self.trip_service.clear_conversation_state(user_id, chat_id)
 
-            return f"""✅ Expense added with custom split!
+        # Format split details
+        split_details = '\n'.join([
+            f"  • {p}: ${amt:.2f}" for p, amt in split_amounts.items()
+        ])
+
+        return f"""✅ Expense added with custom split!
 
 💰 ${amount:.2f} - {description}
 👤 Paid by: {paid_by}
