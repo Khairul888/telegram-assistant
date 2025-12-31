@@ -234,6 +234,24 @@ class handler(BaseHTTPRequestHandler):
 
             # Handle file uploads
             if "photo" in message or "document" in message:
+                # GROUP CHAT FILTERING: Only process uploads directed at bot
+                if chat_type in ['group', 'supergroup']:
+                    # Check if file is a reply to bot
+                    is_reply_to_bot = message.get('reply_to_message', {}).get('from', {}).get('is_bot', False)
+
+                    # Check for @bot_username mentions in caption
+                    caption = message.get('caption', '')
+                    caption_entities = message.get('caption_entities', [])
+                    mentions_bot = any(
+                        entity.get('type') == 'mention' or entity.get('type') == 'text_mention'
+                        for entity in caption_entities
+                    )
+
+                    # Ignore file if not directed at bot
+                    if not is_reply_to_bot and not mentions_bot:
+                        print(f"Ignoring group file upload from user {user_id} - not directed at bot")
+                        return  # Ignore random file uploads in groups
+
                 result = await file_handler.handle_file_upload(message, user_id, chat_id)
                 if result.get("response"):
                     await telegram_utils.send_message(chat_id, result["response"])
