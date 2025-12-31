@@ -773,6 +773,7 @@ Who paid? Reply with one of: {participants_list}""",
         # Update session with paid_by and move to participant selection
         context['paid_by'] = paid_by
         context['participants_selected'] = []  # Track selected participants
+        context['trip_participants'] = participants  # Cache participants for fast access
         await self.trip_service.get_or_update_session(
             user_id,
             chat_id,
@@ -834,13 +835,16 @@ Select all who should split this expense:"""
         else:
             participants_selected.append(participant)
 
-        # Update session
+        # Update local context but don't persist to database yet (for performance)
         context['participants_selected'] = participants_selected
-        await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
 
-        # Get trip for all participants
-        trip = await self.trip_service.get_current_trip(user_id, chat_id)
-        all_participants = trip.get('participants', [])
+        # Use cached participants from context instead of fetching trip
+        all_participants = context.get('trip_participants', [])
+
+        # Fallback to fetching trip if not in context
+        if not all_participants:
+            trip = await self.trip_service.get_current_trip(user_id, chat_id)
+            all_participants = trip.get('participants', [])
 
         # Rebuild keyboard with updated checkboxes
         keyboard = {

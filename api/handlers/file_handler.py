@@ -378,6 +378,7 @@ You can ask me questions about this document later.""",
         # Update session with paid_by and move to participant selection
         context['paid_by'] = paid_by
         context['participants_selected'] = []
+        context['trip_participants'] = participants  # Cache participants for fast access
         await self.trip_service.get_or_update_session(
             user_id,
             chat_id,
