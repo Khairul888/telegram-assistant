@@ -93,6 +93,7 @@ def initialize_services():
             from api.agents.places_agent import PlacesAgent
             from api.agents.settlement_agent import SettlementAgent
             from api.agents.trip_agent import TripAgent
+            from api.agents.qa_agent import QAAgent
             from api.agents.router import KeywordRouter
             from api.agents.orchestrator import OrchestratorAgent
 
@@ -110,19 +111,21 @@ def initialize_services():
             places_agent = PlacesAgent(gemini, services_dict, telegram_utils)
             settlement_agent = SettlementAgent(gemini, services_dict, telegram_utils)
             trip_agent = TripAgent(gemini, services_dict, telegram_utils)
+            qa_agent = QAAgent(gemini, services_dict, telegram_utils)
 
             agents = {
                 'expense': expense_agent,
                 'itinerary': itinerary_agent,
                 'places': places_agent,
                 'settlement': settlement_agent,
-                'trip': trip_agent
+                'trip': trip_agent,
+                'qa': qa_agent
             }
 
             orchestrator = OrchestratorAgent(gemini, services_dict, telegram_utils)
             router = KeywordRouter(agents, orchestrator)
 
-            print("Agents initialized: expense, itinerary, places, settlement, trip")
+            print("Agents initialized: expense, itinerary, places, settlement, trip, qa")
 
         _services_initialized = True
         print("Services initialized successfully")
