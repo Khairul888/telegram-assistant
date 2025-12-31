@@ -835,8 +835,9 @@ Select all who should split this expense:"""
         else:
             participants_selected.append(participant)
 
-        # Update local context but don't persist to database yet (for performance)
+        # Update context and persist to database to preserve selections between clicks
         context['participants_selected'] = participants_selected
+        await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
 
         # Use cached participants from context instead of fetching trip
         all_participants = context.get('trip_participants', [])
