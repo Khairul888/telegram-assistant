@@ -1688,43 +1688,82 @@ Select all who should split this expense:"""
 
 Create a trip first: /new_trip <trip name>"""
 
-        # Get itinerary items
-        items = await self.itinerary_service.get_trip_itinerary(trip['id'])
+        # Get itinerary items from trip_itinerary table
+        itinerary_items = await self.itinerary_service.get_trip_itinerary(trip['id'])
 
-        if not items:
+        # Also get travel events (flights, hotels from uploads)
+        travel_events_result = self.trip_service.supabase.table('travel_events')\
+            .select('*')\
+            .eq('trip_id', trip['id'])\
+            .order('departure_time')\
+            .execute()
+
+        travel_events = travel_events_result.data if travel_events_result.data else []
+
+        # Check if we have any activities at all
+        if not itinerary_items and not travel_events:
             return f"""📅 No itinerary yet for {trip['trip_name']}!
 
-You can paste your schedule and I'll detect it automatically, or add items manually."""
+You can:
+• Upload flight tickets or hotel bookings
+• Paste your schedule and I'll detect it automatically
+• Add items manually"""
 
-        # Format itinerary by day
-        by_day = {}
-        for item in items:
-            day_order = item.get('day_order', 0)
-            date = item.get('date', 'Unknown date')
-            key = f"Day {day_order}" if day_order else date
-
-            if key not in by_day:
-                by_day[key] = []
-            by_day[key].append(item)
-
-        # Build response
+        # Build response starting with travel events
         response_lines = [f"📅 Itinerary for {trip['trip_name']}:\n"]
 
-        for day_key in sorted(by_day.keys()):
-            day_items = by_day[day_key]
-            response_lines.append(f"\n**{day_key}:**")
+        # First, show travel events (flights & hotels)
+        if travel_events:
+            response_lines.append("\n**✈️ TRAVEL:**")
+            for event in travel_events:
+                if event['event_type'] == 'flight':
+                    flight_line = f"  • {event.get('airline', 'Unknown')} {event.get('flight_number', '')}"
+                    flight_line += f"\n    {event.get('departure_city', '')} → {event.get('arrival_city', '')}"
+                    if event.get('departure_time'):
+                        flight_line += f"\n    Departs: {event.get('departure_time')}"
+                    if event.get('seat'):
+                        flight_line += f" | Seat {event.get('seat')}"
+                    if event.get('gate'):
+                        flight_line += f" | Gate {event.get('gate')}"
+                    response_lines.append(flight_line)
 
-            for item in sorted(day_items, key=lambda x: (x.get('time_order', 0), x.get('time', ''))):
-                time = item.get('time', '')
-                title = item.get('title', 'Activity')
-                location = item.get('location', '')
-                description = item.get('description', '')
+                elif event['event_type'] == 'hotel':
+                    hotel_line = f"  • 🏨 {event.get('hotel_name', 'Hotel')}"
+                    hotel_line += f"\n    📍 {event.get('location', '')}"
+                    hotel_line += f"\n    Check-in: {event.get('check_in_date', '')} → {event.get('check_out_date', '')}"
+                    if event.get('room_type'):
+                        hotel_line += f"\n    Room: {event.get('room_type')}"
+                    response_lines.append(hotel_line)
 
-                time_str = f"{time} - " if time else ""
-                location_str = f" ({location})" if location else ""
-                desc_str = f"\n    {description}" if description else ""
+        # Then show itinerary items organized by day
+        if itinerary_items:
+            # Format itinerary by day
+            by_day = {}
+            for item in itinerary_items:
+                day_order = item.get('day_order', 0)
+                date = item.get('date', 'Unknown date')
+                key = f"Day {day_order}" if day_order else date
 
-                response_lines.append(f"  • {time_str}{title}{location_str}{desc_str}")
+                if key not in by_day:
+                    by_day[key] = []
+                by_day[key].append(item)
+
+            response_lines.append("\n**📋 ACTIVITIES:**")
+            for day_key in sorted(by_day.keys()):
+                day_items = by_day[day_key]
+                response_lines.append(f"\n{day_key}:")
+
+                for item in sorted(day_items, key=lambda x: (x.get('time_order', 0), x.get('time', ''))):
+                    time = item.get('time', '')
+                    title = item.get('title', 'Activity')
+                    location = item.get('location', '')
+                    description = item.get('description', '')
+
+                    time_str = f"{time} - " if time else ""
+                    location_str = f" ({location})" if location else ""
+                    desc_str = f"\n    {description}" if description else ""
+
+                    response_lines.append(f"  • {time_str}{title}{location_str}{desc_str}")
 
         return "\n".join(response_lines)
 
