@@ -495,6 +495,14 @@ This shows the total owed across all expenses for this trip."""
         Returns:
             str: Response message with trip list or switch confirmation
         """
+        # Disable /switch_trip in group chats (groups share one active trip)
+        is_dm = (chat_id == user_id)
+        if not is_dm:
+            return """❌ Trip switching is disabled in group chats.
+
+The group automatically uses the most recent active trip.
+All members work on the same trip together."""
+
         trips = await self.trip_service.list_trips(user_id, chat_id)
         if not trips:
             return "No trips in this chat. Create one with /new_trip"

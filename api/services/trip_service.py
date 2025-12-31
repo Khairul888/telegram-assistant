@@ -59,8 +59,11 @@ class TripService:
 
     async def get_current_trip(self, user_id: str, chat_id: str) -> Optional[Dict]:
         """
-        Get user's current active trip for this chat.
-        Auto-selects latest active trip if no current trip is set.
+        Get current active trip for this chat.
+
+        Behavior differs by chat type:
+        - Group chats: Always use latest active trip (shared across all users)
+        - DMs: Allow per-user trip selection (user can switch between trips)
 
         Args:
             user_id: Telegram user ID
@@ -70,29 +73,34 @@ class TripService:
             dict: Trip data or None if no trips exist
         """
         try:
-            # Check user session for this chat
-            session_result = self.supabase.table('user_sessions')\
-                .select('current_trip_id')\
-                .eq('user_id', user_id)\
-                .eq('chat_id', chat_id)\
-                .execute()
+            # Determine chat type: DMs have chat_id == user_id
+            is_dm = (chat_id == user_id)
 
-            # If session exists and has current_trip_id
-            if session_result.data and len(session_result.data) > 0:
-                current_trip_id = session_result.data[0].get('current_trip_id')
+            # For DMs only: Check user's session for current_trip_id
+            if is_dm:
+                session_result = self.supabase.table('user_sessions')\
+                    .select('current_trip_id')\
+                    .eq('user_id', user_id)\
+                    .eq('chat_id', chat_id)\
+                    .execute()
 
-                if current_trip_id:
-                    # Get the trip and verify it belongs to this chat
-                    trip_result = self.supabase.table('trips')\
-                        .select('*')\
-                        .eq('id', current_trip_id)\
-                        .eq('chat_id', chat_id)\
-                        .execute()
+                # If session exists and has current_trip_id
+                if session_result.data and len(session_result.data) > 0:
+                    current_trip_id = session_result.data[0].get('current_trip_id')
 
-                    if trip_result.data and len(trip_result.data) > 0:
-                        return trip_result.data[0]
+                    if current_trip_id:
+                        # Get the trip and verify it belongs to this chat
+                        trip_result = self.supabase.table('trips')\
+                            .select('*')\
+                            .eq('id', current_trip_id)\
+                            .eq('chat_id', chat_id)\
+                            .execute()
 
-            # Fallback: get latest active trip FOR THIS CHAT (auto-use)
+                        if trip_result.data and len(trip_result.data) > 0:
+                            return trip_result.data[0]
+
+            # For groups: Always use latest active trip (no per-user selection)
+            # For DMs: Fallback if no session found
             result = self.supabase.table('trips')\
                 .select('*')\
                 .eq('chat_id', chat_id)\
@@ -103,8 +111,9 @@ class TripService:
 
             if result.data and len(result.data) > 0:
                 trip = result.data[0]
-                # Set as current trip for this user in this chat
-                await self._set_current_trip(user_id, chat_id, trip['id'])
+                # Only set session for DMs (not groups - groups share trip context)
+                if is_dm:
+                    await self._set_current_trip(user_id, chat_id, trip['id'])
                 return trip
 
             return None
