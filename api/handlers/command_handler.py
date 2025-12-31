@@ -1,6 +1,11 @@
 """Command handler for bot commands."""
 from typing import Dict
 
+# In-memory storage for participant selections (shared across handlers)
+# Avoids DB writes on every click for instant feedback
+# Key format: "{user_id}:{chat_id}:{expense_id}"
+_participant_selections = {}
+
 
 class CommandHandler:
     """Handles bot commands and multi-step conversation flows."""
@@ -781,6 +786,10 @@ Who paid? Reply with one of: {participants_list}""",
             context=context
         )
 
+        # Initialize in-memory storage for fast participant selection
+        selection_key = f"{user_id}:{chat_id}:{expense_id}"
+        _participant_selections[selection_key] = []
+
         # Create keyboard for participant selection (multi-select)
         keyboard = {
             "inline_keyboard": [
@@ -820,26 +829,28 @@ Select all who should split this expense:"""
         Returns:
             dict: {response: str or None, keyboard: dict or None}
         """
-        # Get session context
-        session = await self.trip_service.get_or_update_session(user_id, chat_id)
-        context = session.get('conversation_context', {})
+        # Get in-memory selections (fast, no database call)
+        selection_key = f"{user_id}:{chat_id}:{expense_id}"
+        participants_selected = _participant_selections.get(selection_key, [])
 
-        participants_selected = context.get('participants_selected', [])
-        amount = context.get('expense_amount')
-        description = context.get('expense_description')
-        paid_by = context.get('paid_by')
-
-        # Toggle selection
+        # Toggle selection in memory
         if participant in participants_selected:
             participants_selected.remove(participant)
         else:
             participants_selected.append(participant)
 
-        # Update context and persist to database to preserve selections between clicks
-        context['participants_selected'] = participants_selected
-        await self.trip_service.get_or_update_session(user_id, chat_id, context=context)
+        # Update in-memory storage (instant, no database write)
+        _participant_selections[selection_key] = participants_selected
 
-        # Use cached participants from context instead of fetching trip
+        # Get context for display info and cached participant list
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
+        context = session.get('conversation_context', {})
+
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+
+        # Use cached participants from context
         all_participants = context.get('trip_participants', [])
 
         # Fallback to fetching trip if not in context
@@ -883,25 +894,33 @@ Select all who should split this expense:"""
         Returns:
             dict: {response: str or None, keyboard: dict or None}
         """
-        # Get session context
-        session = await self.trip_service.get_or_update_session(user_id, chat_id)
-        context = session.get('conversation_context', {})
-
-        participants_selected = context.get('participants_selected', [])
-        amount = context.get('expense_amount')
-        description = context.get('expense_description')
-        paid_by = context.get('paid_by')
+        # Get selections from in-memory storage
+        selection_key = f"{user_id}:{chat_id}:{expense_id}"
+        participants_selected = _participant_selections.get(selection_key, [])
 
         if not participants_selected:
             return {"response": "Please select at least one participant.", "keyboard": None}
 
-        # Update state to split type selection
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
+        context = session.get('conversation_context', {})
+
+        amount = context.get('expense_amount')
+        description = context.get('expense_description')
+        paid_by = context.get('paid_by')
+
+        # Save selections to database and update state to split type selection
+        context['participants_selected'] = participants_selected
         await self.trip_service.get_or_update_session(
             user_id,
             chat_id,
             state='awaiting_split_type',
             context=context
         )
+
+        # Clear from in-memory storage (cleanup)
+        if selection_key in _participant_selections:
+            del _participant_selections[selection_key]
 
         # Create keyboard for split type selection
         keyboard = {
