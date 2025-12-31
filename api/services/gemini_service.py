@@ -1382,7 +1382,7 @@ JSON:"""
                 part = response.candidates[0].content.parts[0]
 
                 # Function call
-                if hasattr(part, 'function_call'):
+                if hasattr(part, 'function_call') and part.function_call is not None:
                     function_call = part.function_call
                     return {
                         "type": "function_call",
@@ -1391,7 +1391,7 @@ JSON:"""
                     }
 
                 # Text response
-                if hasattr(part, 'text'):
+                if hasattr(part, 'text') and part.text:
                     return {"type": "text_response", "text": part.text}
 
             # Fallback
