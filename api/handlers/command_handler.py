@@ -178,6 +178,105 @@ Commands:
         else:
             return f"❌ Error creating trip: {result.get('error')}"
 
+    async def handle_trip_start_date_response(self, user_id: str, chat_id: str, date_text: str) -> str:
+        """
+        Handle user's response with trip start date for itinerary.
+
+        Args:
+            user_id: Telegram user ID
+            chat_id: Telegram chat ID
+            date_text: User's date input (flexible format)
+
+        Returns:
+            str: Response message
+        """
+        # Get session context
+        session = await self.trip_service.get_or_update_session(user_id, chat_id)
+        context = session.get('conversation_context', {})
+        items = context.get('itinerary_items', [])
+        trip_id = context.get('trip_id')
+
+        if not items or not trip_id:
+            return "Error: Session expired. Please paste your itinerary again."
+
+        # Use Gemini to parse the date flexibly
+        try:
+            prompt = f"""Extract a date from this text: "{date_text}"
+
+Return ONLY the date in YYYY-MM-DD format, nothing else.
+Examples:
+- "January 15" → 2026-01-15 (assume current year if not specified)
+- "2026-01-15" → 2026-01-15
+- "Jan 15 2026" → 2026-01-15
+- "15/01/2026" → 2026-01-15"""
+
+            parsed_date = await self.gemini_service.generate_response(prompt, "You are a date parser. Return only YYYY-MM-DD format.")
+            parsed_date = parsed_date.strip()
+
+            # Validate format
+            from datetime import datetime
+            datetime.strptime(parsed_date, '%Y-%m-%d')  # Raises ValueError if invalid
+
+            # Update trip with start_date
+            update_result = await self.trip_service.update_trip(
+                trip_id=trip_id,
+                updates={'start_date': parsed_date}
+            )
+
+            if not update_result.get('success'):
+                return f"❌ Error saving start date: {update_result.get('error')}"
+
+            # Move to confirmation state
+            await self.trip_service.get_or_update_session(
+                user_id,
+                chat_id,
+                state='awaiting_itinerary_confirmation',
+                context={
+                    'itinerary_items': items,
+                    'trip_id': trip_id,
+                    'trip_start_date': parsed_date
+                }
+            )
+
+            # Format preview
+            preview_lines = []
+            for i, item in enumerate(items[:5]):
+                time_str = f"{item.get('time', '')} " if item.get('time') else ""
+                title = item.get('title', 'Activity')
+                day = item.get('day_order', '?')
+                preview_lines.append(f"  Day {day}: {time_str}{title}")
+
+            preview = "\n".join(preview_lines)
+            if len(items) > 5:
+                preview += f"\n  ... and {len(items) - 5} more activities"
+
+            message = f"""✅ Got it! Day 1 starts on {parsed_date}.
+
+{preview}
+
+Would you like me to save this to your trip schedule?"""
+
+            # Create inline keyboard for confirmation
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "✅ Yes, save it", "callback_data": "itinerary_confirm:yes"},
+                        {"text": "❌ No, cancel", "callback_data": "itinerary_confirm:no"}
+                    ]
+                ]
+            }
+
+            # Send message with keyboard
+            await self.telegram_utils.send_message_with_keyboard(chat_id, message, keyboard)
+
+            return ""  # Message already sent
+
+        except ValueError:
+            return f"❌ I couldn't understand that date. Please provide a clear date like:\n  • January 15\n  • 2026-01-15\n  • Jan 15 2026"
+        except Exception as e:
+            print(f"Error parsing date: {e}")
+            return f"❌ Error processing date: {str(e)}"
+
     async def handle_expense_fields_response(self, user_id: str, chat_id: str, user_input: str) -> str:
         """
         Handle user response when expense is missing required fields.

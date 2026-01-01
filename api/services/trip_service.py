@@ -183,6 +183,34 @@ class TripService:
         except Exception as e:
             print(f"Error updating trip activity: {e}")
 
+    async def update_trip(self, trip_id: int, updates: Dict) -> Dict:
+        """
+        Update trip fields.
+
+        Args:
+            trip_id: Trip ID to update
+            updates: Dict of fields to update (e.g., {'start_date': '2026-01-15', 'end_date': '2026-01-20'})
+
+        Returns:
+            dict: {"success": bool, "trip": dict} or {"success": False, "error": str}
+        """
+        try:
+            # Add updated_at timestamp
+            updates['updated_at'] = datetime.now().isoformat()
+
+            result = self.supabase.table('trips')\
+                .update(updates)\
+                .eq('id', trip_id)\
+                .execute()
+
+            if not result.data:
+                return {"success": False, "error": "Trip not found"}
+
+            return {"success": True, "trip": result.data[0]}
+        except Exception as e:
+            print(f"Error updating trip: {e}")
+            return {"success": False, "error": str(e)}
+
     async def _set_current_trip(self, user_id: str, chat_id: str, trip_id: int):
         """
         Set current trip in user session for this chat.

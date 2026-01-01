@@ -326,6 +326,9 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_edit_amount_text(user_id, chat_id, text)
             elif state == 'awaiting_edit_description':
                 response = await command_handler.handle_edit_description_text(user_id, chat_id, text)
+            elif state == 'awaiting_trip_start_date':
+                # User is providing start date for itinerary
+                response = await command_handler.handle_trip_start_date_response(user_id, chat_id, text)
             elif state == 'awaiting_itinerary_confirmation':
                 # Handled via callback, ignore text
                 response = "Please use the buttons above to confirm or cancel. (Or use /cancel to exit)"

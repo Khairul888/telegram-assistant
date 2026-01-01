@@ -43,6 +43,46 @@ class ItineraryAgent(BaseAgent):
                 if not items:
                     return {"success": False, "error": "No itinerary items found in text"}
 
+                # Check if trip has start_date
+                trip = await trip_service.get_trip_by_id(trip_id)
+                has_start_date = trip.get('start_date') if trip else False
+
+                # Check if items have dates or if we need to ask for start date
+                items_have_dates = any(item.get('date') for item in items)
+                items_have_day_order = any(item.get('day_order') for item in items)
+
+                # If items only have day_order and trip has no start_date, ask user
+                if items_have_day_order and not items_have_dates and not has_start_date:
+                    # Store in session for date collection
+                    await trip_service.get_or_update_session(
+                        user_id,
+                        chat_id,
+                        state='awaiting_trip_start_date',
+                        context={
+                            'itinerary_items': items,
+                            'itinerary_summary': summary,
+                            'trip_id': trip_id
+                        }
+                    )
+
+                    message = f"""I found {len(items)} activities organized by day number.
+
+{preview}
+
+To save these with the correct dates, what date does **Day 1** start?
+
+Please respond with a date (e.g., "January 15" or "2026-01-15")"""
+
+                    await self.telegram.send_message(chat_id, message)
+
+                    return {
+                        "success": True,
+                        "already_sent": True,
+                        "count": len(items),
+                        "items": items,
+                        "summary": summary
+                    }
+
                 # Store in session for confirmation
                 await trip_service.get_or_update_session(
                     user_id,
