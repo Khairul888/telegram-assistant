@@ -24,8 +24,14 @@ class QAAgent(BaseAgent):
             dict: {"success": bool, "response": str, "already_sent": bool}
         """
         try:
+            # Debug logging
+            print(f"[QA Agent] Processing question for trip_id={trip_context['id']}, trip_name={trip_context.get('trip_name')}, chat_id={chat_id}")
+
             # Build comprehensive trip context
             context = await self._build_trip_context(trip_context['id'])
+
+            # Debug: Log context length
+            print(f"[QA Agent] Built context ({len(context)} chars): {context[:200]}...")
 
             # Generate response with context
             system_instruction = f"""You are a helpful travel assistant for "{trip_context['trip_name']}" to {trip_context.get('location', 'Unknown')}.
@@ -100,6 +106,11 @@ Answer the user's question based on this trip information. If you don't have the
             .select('*')\
             .eq('trip_id', trip_id)\
             .execute()
+
+        # Debug logging
+        print(f"[QA Agent] Queried travel_events for trip_id={trip_id}, found {len(events_result.data) if events_result.data else 0} events")
+        if events_result.data:
+            print(f"[QA Agent] First event: {events_result.data[0]}")
 
         if events_result.data:
             context_parts.append("TRAVEL INFORMATION:")
