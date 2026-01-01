@@ -97,7 +97,15 @@ class KeywordRouter:
 
         # Fallback to orchestrator (LLM routing)
         try:
-            routing = await self.orchestrator.route(user_id, chat_id, message, trip_context)
+            # Get conversation history from memory service
+            from api.bot import memory_service
+            conversation_history = []
+            if memory_service:
+                conversation_history = memory_service.get_history(trip_context['id'], limit=10)
+
+            routing = await self.orchestrator.route(
+                user_id, chat_id, message, trip_context, conversation_history
+            )
             routed_agent_name = routing.get("agent", "qa")
 
             if routed_agent_name in self.agents:

@@ -28,22 +28,38 @@ class OrchestratorAgent:
         }
 
     async def route(self, user_id: str, chat_id: str, message: str,
-                   trip_context: dict) -> dict:
+                   trip_context: dict, conversation_history: list = None) -> dict:
         """
-        Route message using LLM classification.
+        Route message using LLM classification with conversation history context.
 
         Args:
             user_id: Telegram user ID
             chat_id: Telegram chat ID
             message: User message text
             trip_context: Current trip dict
+            conversation_history: Optional list of LangChain message objects
 
         Returns:
             dict: {"agent": str, "intent": str}
         """
-        prompt = f"""Classify this message and determine which specialized agent should handle it:
+        # Build conversation context if available
+        context_section = ""
+        if conversation_history and len(conversation_history) > 0:
+            from langchain_core.messages import HumanMessage
+            history_lines = []
+            for msg in conversation_history[-5:]:  # Last 5 messages for context
+                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                history_lines.append(f"{role}: {msg.content}")
 
-Message: "{message}"
+            context_section = f"""
+Previous conversation:
+{chr(10).join(history_lines)}
+
+"""
+
+        prompt = f"""{context_section}Classify this message and determine which specialized agent should handle it:
+
+Current message: "{message}"
 
 Available agents:
 - expense: Handle expense tracking, bills, receipts, payments, splits, spending
@@ -52,6 +68,9 @@ Available agents:
 - settlement: Handle balances, who owes whom, settling up, payment calculations
 - trip: Handle trip creation, participants, location changes, switching trips
 - qa: Handle general questions about the trip (what, when, where, how, weather)
+
+IMPORTANT: Use the previous conversation to understand context. If the user says "yes", "save it", "change it", etc.,
+determine which agent they're referring to based on what was just discussed.
 
 Respond with ONLY the agent name (expense, itinerary, places, settlement, trip, or qa), nothing else. Do not use bold formatting."""
 

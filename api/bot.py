@@ -41,6 +41,7 @@ message_handler = None
 intent_handler = None
 router = None
 agents_enabled = False
+memory_service = None
 
 
 def initialize_services():
@@ -48,7 +49,7 @@ def initialize_services():
     global _services_initialized, supabase, gemini, trip_service, expense_service
     global settlement_service, itinerary_service, places_service, telegram_utils
     global command_handler, file_handler, message_handler, intent_handler
-    global router, agents_enabled
+    global router, agents_enabled, memory_service
 
     if _services_initialized:
         return
@@ -125,7 +126,12 @@ def initialize_services():
             orchestrator = OrchestratorAgent(gemini, services_dict, telegram_utils)
             router = KeywordRouter(agents, orchestrator)
 
+            # Initialize conversation memory service
+            from api.services.memory_service import ConversationMemoryService
+            memory_service = ConversationMemoryService(max_messages=15)
+
             print("Agents initialized: expense, itinerary, places, settlement, trip, qa")
+            print("Conversation memory initialized (15 messages per trip)")
 
         _services_initialized = True
         print("Services initialized successfully")
@@ -371,11 +377,22 @@ class handler(BaseHTTPRequestHandler):
 
                     trip = await trip_service.get_current_trip(user_id, chat_id)
                     if trip:
+                        trip_id = trip['id']
+
                         # NEW: Agent-based routing (feature-flag controlled)
                         if agents_enabled and router:
+                            # Track user message in memory
+                            if memory_service:
+                                memory_service.add_user_message(trip_id, text)
+
                             result = await router.route(user_id, chat_id, text, trip)
                             if result.get("success"):
                                 response = result.get("response")
+
+                                # Track AI response in memory
+                                if memory_service and response:
+                                    memory_service.add_ai_message(trip_id, response)
+
                                 # Check if already sent via streaming
                                 if response and not result.get("already_sent"):
                                     await telegram_utils.send_message(chat_id, response)
@@ -407,6 +424,11 @@ class handler(BaseHTTPRequestHandler):
                 # Fallback to Q&A if no intent matched or no trip
                 if not response:
                     response = await message_handler.handle_question(user_id, chat_id, text)
+
+                    # Track fallback Q&A in memory (if trip exists)
+                    if trip and memory_service and response:
+                        memory_service.add_user_message(trip['id'], text)
+                        memory_service.add_ai_message(trip['id'], response)
 
             if response:
                 await telegram_utils.send_message(chat_id, response)
