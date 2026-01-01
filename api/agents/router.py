@@ -10,7 +10,6 @@ class KeywordRouter:
         'expense': [
             r'\$\d+',  # Dollar amounts like $15
             r'spent|paid|expense|cost|bill|receipt',
-            r'lunch|dinner|breakfast|meal|restaurant|cafe',
             r'add expense|new expense|track expense',
             r'list expenses|show expenses|view expenses',
             r'delete expense|remove expense',
@@ -146,7 +145,8 @@ class KeywordRouter:
         message_lower = message.lower()
 
         # Check each agent's patterns (order matters - more specific first)
-        agent_priority = ['expense', 'itinerary', 'places', 'settlement', 'trip', 'qa']
+        # Itinerary before expense: times/days are stronger signals than general words
+        agent_priority = ['itinerary', 'expense', 'places', 'settlement', 'trip', 'qa']
 
         for agent_name in agent_priority:
             patterns = self.PATTERNS.get(agent_name, [])
