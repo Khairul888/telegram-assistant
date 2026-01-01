@@ -28,7 +28,7 @@ class BaseAgent:
         raise NotImplementedError("Subclass must implement _define_tools()")
 
     async def process(self, user_id: str, chat_id: str, message: str,
-                     trip_context: dict) -> dict:
+                     trip_context: dict, conversation_history: list = None) -> dict:
         """
         Main processing loop with streaming.
 
@@ -47,7 +47,7 @@ class BaseAgent:
 
         try:
             # Build context
-            context = self._build_context(trip_context)
+            context = self._build_context(trip_context, conversation_history)
 
             # Call Gemini with tools
             result = await self.gemini.call_function(
@@ -116,12 +116,13 @@ class BaseAgent:
         """
         raise NotImplementedError("Subclass must implement _call_function()")
 
-    def _build_context(self, trip_context: dict) -> str:
+    def _build_context(self, trip_context: dict, conversation_history: list = None) -> str:
         """
-        Build system instruction from trip context.
+        Build system instruction from trip context and conversation history.
 
         Args:
             trip_context: Current trip dict
+            conversation_history: Optional list of LangChain message objects
 
         Returns:
             str: System instruction for LLM
@@ -132,10 +133,30 @@ class BaseAgent:
 
         participants_str = ', '.join(participants) if participants else 'No participants'
 
-        return f"""You are a helpful travel assistant for trip "{trip_name}" to {location}.
+        base_context = f"""You are a helpful travel assistant for trip "{trip_name}" to {location}.
 Participants: {participants_str}
 
 Use the available tools to help the user manage their trip. Do not use bold formatting or include reasoning."""
+
+        # Add conversation history if available
+        if conversation_history and len(conversation_history) > 0:
+            from langchain_core.messages import HumanMessage
+            history_lines = []
+            for msg in conversation_history[-5:]:  # Last 5 messages for context
+                role = "User" if isinstance(msg, HumanMessage) else "Assistant"
+                history_lines.append(f"{role}: {msg.content}")
+
+            history_context = f"""
+
+Previous conversation:
+{chr(10).join(history_lines)}
+
+IMPORTANT: Use the conversation history to understand context. If the user says "yes", "save it", "do it", etc.,
+refer to the previous messages to determine which function they want you to call."""
+
+            return base_context + history_context
+
+        return base_context
 
     def _format_output(self, function_name: str, output: dict) -> str:
         """

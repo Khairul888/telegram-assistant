@@ -10,7 +10,7 @@ class QAAgent(BaseAgent):
         return []
 
     async def process(self, user_id: str, chat_id: str, message: str,
-                     trip_context: dict) -> dict:
+                     trip_context: dict, conversation_history: list = None) -> dict:
         """
         Process question using trip context (travel events, expenses, etc.).
 

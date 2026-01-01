@@ -86,7 +86,13 @@ class KeywordRouter:
         if agent_name and agent_name in self.agents:
             agent = self.agents[agent_name]
             try:
-                return await agent.process(user_id, chat_id, message, trip_context)
+                # Get conversation history for agent
+                from api.bot import memory_service
+                conversation_history = []
+                if memory_service:
+                    conversation_history = memory_service.get_history(trip_context['id'], limit=10)
+
+                return await agent.process(user_id, chat_id, message, trip_context, conversation_history)
             except Exception as e:
                 print(f"Agent {agent_name} error: {e}")
                 return {
@@ -110,7 +116,8 @@ class KeywordRouter:
 
             if routed_agent_name in self.agents:
                 agent = self.agents[routed_agent_name]
-                return await agent.process(user_id, chat_id, message, trip_context)
+                # Reuse conversation_history already retrieved above (lines 103-107)
+                return await agent.process(user_id, chat_id, message, trip_context, conversation_history)
             else:
                 # Agent not available, return error
                 return {
