@@ -309,7 +309,12 @@ class handler(BaseHTTPRequestHandler):
             # Route based on conversation state or command
             response = None
 
-            if state == 'awaiting_location':
+            # Check for /cancel first - should work regardless of state
+            if text.startswith('/cancel'):
+                # Clear any pending state
+                await trip_service.clear_conversation_state(user_id, chat_id)
+                response = "✅ Cancelled. Any pending actions have been cleared."
+            elif state == 'awaiting_location':
                 response = await command_handler.handle_location_response(user_id, chat_id, text)
             elif state == 'awaiting_participants':
                 response = await command_handler.handle_participants_response(user_id, chat_id, text)
@@ -352,10 +357,6 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_start()
             elif text.startswith('/help'):
                 response = await command_handler.handle_help(chat_type)
-            elif text.startswith('/cancel'):
-                # Clear any pending state
-                await trip_service.clear_conversation_state(user_id, chat_id)
-                response = "✅ Cancelled. Any pending actions have been cleared."
             elif text.startswith('/itinerary'):
                 response = await command_handler.handle_itinerary(user_id, chat_id)
             elif text.startswith('/wishlist'):
