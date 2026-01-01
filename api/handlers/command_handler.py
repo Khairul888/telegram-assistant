@@ -610,6 +610,7 @@ TRAVEL INFO:
 OTHER:
 • /start - Welcome message
 • /help - This guide
+• /cancel - Cancel pending actions and clear state
 
 Tips:"""
 

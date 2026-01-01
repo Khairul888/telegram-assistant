@@ -323,7 +323,7 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_edit_description_text(user_id, chat_id, text)
             elif state == 'awaiting_itinerary_confirmation':
                 # Handled via callback, ignore text
-                response = "Please use the buttons above to confirm or cancel."
+                response = "Please use the buttons above to confirm or cancel. (Or use /cancel to exit)"
             elif state == 'awaiting_place_category':
                 # Handled via callback, ignore text
                 response = "Please select a category using the buttons above."
@@ -352,6 +352,10 @@ class handler(BaseHTTPRequestHandler):
                 response = await command_handler.handle_start()
             elif text.startswith('/help'):
                 response = await command_handler.handle_help(chat_type)
+            elif text.startswith('/cancel'):
+                # Clear any pending state
+                await trip_service.clear_conversation_state(user_id, chat_id)
+                response = "✅ Cancelled. Any pending actions have been cleared."
             elif text.startswith('/itinerary'):
                 response = await command_handler.handle_itinerary(user_id, chat_id)
             elif text.startswith('/wishlist'):
