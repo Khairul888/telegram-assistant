@@ -78,6 +78,13 @@ class BaseAgent:
                 if status_msg_id:
                     await self.telegram.delete_message(chat_id, status_msg_id)
 
+                # Check if function already sent the message (e.g., with keyboard)
+                already_sent = output.get("already_sent", False)
+
+                if already_sent:
+                    # Function handled sending, don't send again
+                    return {"success": True, "response": "", "already_sent": True}
+
                 # Format response
                 response = self._format_output(result["function_name"], output)
                 return {"success": True, "response": response, "already_sent": False}

@@ -55,8 +55,40 @@ class ItineraryAgent(BaseAgent):
                     }
                 )
 
+                # Format preview message
+                preview_lines = []
+                for i, item in enumerate(items[:5]):  # Show first 5 as preview
+                    time_str = f"{item.get('time', '')} " if item.get('time') else ""
+                    title = item.get('title', 'Activity')
+                    day = item.get('day_order', '?')
+                    preview_lines.append(f"  Day {day}: {time_str}{title}")
+
+                preview = "\n".join(preview_lines)
+                if len(items) > 5:
+                    preview += f"\n  ... and {len(items) - 5} more activities"
+
+                message = f"""I found {len(items)} activities in your itinerary:
+
+{preview}
+
+Would you like me to save this to your trip schedule?"""
+
+                # Create inline keyboard for confirmation
+                keyboard = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Yes, save it", "callback_data": "itinerary_confirm:yes"},
+                            {"text": "❌ No, cancel", "callback_data": "itinerary_confirm:no"}
+                        ]
+                    ]
+                }
+
+                # Send message with keyboard directly
+                await self.telegram.send_message_with_keyboard(chat_id, message, keyboard)
+
                 return {
                     "success": True,
+                    "already_sent": True,  # Flag that we already sent the message
                     "count": len(items),
                     "items": items,
                     "summary": summary
