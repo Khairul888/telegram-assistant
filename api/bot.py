@@ -263,6 +263,25 @@ class handler(BaseHTTPRequestHandler):
             # Handle text messages
             text = message.get("text", "")
 
+            # GROUP CHAT: Clean up @mentions from text early (before any routing)
+            # This ensures "@botname when is my flight?" becomes "when is my flight?"
+            if chat_type in ['group', 'supergroup'] and not text.startswith('/'):
+                entities = message.get('entities', [])
+                mentions_bot = any(
+                    entity.get('type') == 'mention' or entity.get('type') == 'text_mention'
+                    for entity in entities
+                )
+
+                if mentions_bot and entities:
+                    for entity in entities:
+                        if entity.get('type') in ['mention', 'text_mention']:
+                            offset = entity.get('offset', 0)
+                            length = entity.get('length', 0)
+                            # Remove the mention from text
+                            text = text[:offset] + text[offset + length:]
+                            text = text.strip()  # Clean up extra spaces
+                            break  # Only remove first mention
+
             # GROUP CHAT FILTERING: For non-command messages in groups with active conversation state,
             # require the message to be directed at the bot (reply or mention)
             if chat_type in ['group', 'supergroup'] and state and not text.startswith('/'):
@@ -280,18 +299,6 @@ class handler(BaseHTTPRequestHandler):
                 if not is_reply_to_bot and not mentions_bot:
                     print(f"Ignoring group message from user {user_id} - not directed at bot (state: {state})")
                     return  # Ignore messages not directed at bot during conversation flows
-
-                # Clean up @mentions from the text for cleaner processing
-                # (e.g., "@botname Tokyo, Japan" -> "Tokyo, Japan")
-                if mentions_bot and entities:
-                    for entity in entities:
-                        if entity.get('type') in ['mention', 'text_mention']:
-                            offset = entity.get('offset', 0)
-                            length = entity.get('length', 0)
-                            # Remove the mention from text
-                            text = text[:offset] + text[offset + length:]
-                            text = text.strip()  # Clean up extra spaces
-                            break  # Only remove first mention
 
             # Route based on conversation state or command
             response = None
