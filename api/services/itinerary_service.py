@@ -1,6 +1,6 @@
 """Itinerary management service for trip schedule tracking."""
 from typing import Dict, List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 
 class ItineraryService:
@@ -25,13 +25,37 @@ class ItineraryService:
             dict: {"success": bool, "count": int, "items": list} or error
         """
         try:
+            # Get trip start date for date calculation
+            trip_result = self.supabase.table('trips')\
+                .select('start_date')\
+                .eq('id', trip_id)\
+                .execute()
+
+            trip_start_date = None
+            if trip_result.data and len(trip_result.data) > 0:
+                trip_start_date = trip_result.data[0].get('start_date')
+
             # Prepare items for insertion
             itinerary_items = []
             for item in items:
+                # Calculate date from day_order if not provided
+                item_date = item.get("date")
+                if not item_date and item.get("day_order") and trip_start_date:
+                    try:
+                        # Parse trip start date
+                        start_dt = datetime.fromisoformat(trip_start_date.replace('Z', '+00:00'))
+                        # Calculate date: start_date + (day_order - 1) days
+                        target_dt = start_dt + timedelta(days=item["day_order"] - 1)
+                        item_date = target_dt.strftime('%Y-%m-%d')
+                    except Exception as e:
+                        print(f"Error calculating date from day_order: {e}")
+                        # Fallback: use trip start date
+                        item_date = trip_start_date.split('T')[0] if trip_start_date else None
+
                 item_data = {
                     "user_id": user_id,
                     "trip_id": trip_id,
-                    "date": item.get("date"),
+                    "date": item_date,
                     "time": item.get("time"),
                     "title": item["title"],
                     "description": item.get("description"),
