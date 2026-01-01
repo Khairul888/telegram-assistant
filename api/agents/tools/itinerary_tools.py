@@ -2,6 +2,28 @@
 
 ITINERARY_TOOLS = [
     {
+        "name": "parse_itinerary_text",
+        "description": "Parse and extract structured itinerary data from raw pasted text (e.g., user's copy-pasted travel schedule). Use this when the user pastes a schedule/itinerary with dates, times, and activities. This extracts the data and prepares it for saving.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The raw itinerary text pasted by the user"
+                }
+            },
+            "required": ["text"]
+        }
+    },
+    {
+        "name": "save_pending_itinerary",
+        "description": "Save the previously parsed itinerary to the trip schedule. Use this after parse_itinerary_text when the user confirms they want to save it (e.g., user says 'yes', 'save it', 'do it').",
+        "parameters": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
         "name": "get_itinerary",
         "description": "Get the trip itinerary/schedule for a specific day or all days. Use this when the user asks what's planned, what they're doing on a specific day, or wants to see the schedule.",
         "parameters": {

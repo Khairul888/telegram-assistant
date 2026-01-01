@@ -14,11 +14,89 @@ class ItineraryAgent(BaseAgent):
                             user_id: str, chat_id: str, trip_id: int) -> dict:
         """Execute itinerary service calls."""
         itinerary_service = self.services.get('itinerary')
+        trip_service = self.services.get('trip')
 
         if not itinerary_service:
             return {"success": False, "error": "Itinerary service not available"}
 
-        if function_name == "get_itinerary":
+        if function_name == "parse_itinerary_text":
+            try:
+                text = args.get("text", "")
+                if not text:
+                    return {"success": False, "error": "No text provided"}
+
+                # Get trip start date for relative date calculation
+                trip = await trip_service.get_trip_by_id(trip_id)
+                trip_start_date = trip.get('start_date') if trip else None
+
+                # Extract itinerary using Gemini
+                extraction_result = await self.gemini.extract_itinerary_from_text(
+                    text, trip_start_date
+                )
+
+                if not extraction_result.get("success"):
+                    return {"success": False, "error": "Could not extract itinerary from text"}
+
+                items = extraction_result.get("items", [])
+                summary = extraction_result.get("summary", "")
+
+                if not items:
+                    return {"success": False, "error": "No itinerary items found in text"}
+
+                # Store in session for confirmation
+                await trip_service.get_or_update_session(
+                    user_id,
+                    chat_id,
+                    state='awaiting_itinerary_confirmation',
+                    context={
+                        'itinerary_items': items,
+                        'itinerary_summary': summary,
+                        'trip_id': trip_id
+                    }
+                )
+
+                return {
+                    "success": True,
+                    "count": len(items),
+                    "items": items,
+                    "summary": summary
+                }
+            except Exception as e:
+                print(f"Error parsing itinerary text: {e}")
+                return {"success": False, "error": str(e)}
+
+        elif function_name == "save_pending_itinerary":
+            try:
+                # Get session context
+                session = await trip_service.get_or_update_session(user_id, chat_id)
+                context = session.get('conversation_context', {})
+
+                items = context.get('itinerary_items', [])
+                session_trip_id = context.get('trip_id')
+
+                if not items or not session_trip_id:
+                    return {"success": False, "error": "No pending itinerary found. Please paste an itinerary first."}
+
+                # Verify trip_id matches
+                if session_trip_id != trip_id:
+                    return {"success": False, "error": "Trip mismatch. Please try again."}
+
+                # Create itinerary items
+                result = await itinerary_service.create_itinerary_items(
+                    user_id=user_id,
+                    trip_id=trip_id,
+                    items=items
+                )
+
+                # Clear session state
+                await trip_service.clear_conversation_state(user_id, chat_id)
+
+                return result
+            except Exception as e:
+                print(f"Error saving pending itinerary: {e}")
+                return {"success": False, "error": str(e)}
+
+        elif function_name == "get_itinerary":
             try:
                 # Get filtering parameters
                 day_number = args.get("day_number")
@@ -113,7 +191,41 @@ class ItineraryAgent(BaseAgent):
         if not output.get("success"):
             return f"Error: {output.get('error')}"
 
-        if function_name == "get_itinerary":
+        if function_name == "parse_itinerary_text":
+            count = output.get("count", 0)
+            items = output.get("items", [])
+
+            if count == 0:
+                return "I couldn't find any activities in that text. Please try again."
+
+            # Show brief summary of found items
+            preview_lines = []
+            for i, item in enumerate(items[:5]):  # Show first 5 as preview
+                time_str = f"{item.get('time', '')} " if item.get('time') else ""
+                title = item.get('title', 'Activity')
+                day = item.get('day_order', '?')
+                preview_lines.append(f"  Day {day}: {time_str}{title}")
+
+            preview = "\n".join(preview_lines)
+            if count > 5:
+                preview += f"\n  ... and {count - 5} more activities"
+
+            return f"""I found {count} activities in your itinerary:
+
+{preview}
+
+Would you like me to save this to your trip schedule?"""
+
+        elif function_name == "save_pending_itinerary":
+            count = output.get("count", 0)
+            if count == 0:
+                return "No activities were saved."
+            elif count == 1:
+                return "Saved 1 activity to your itinerary!"
+            else:
+                return f"Saved {count} activities to your itinerary!"
+
+        elif function_name == "get_itinerary":
             items = output.get("items", [])
 
             if not items:
