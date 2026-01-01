@@ -11,7 +11,7 @@ class CommandHandler:
     """Handles bot commands and multi-step conversation flows."""
 
     def __init__(self, trip_service, expense_service, settlement_service, telegram_utils=None,
-                 itinerary_service=None, places_service=None):
+                 itinerary_service=None, places_service=None, gemini_service=None):
         """
         Initialize with service dependencies.
 
@@ -22,6 +22,7 @@ class CommandHandler:
             telegram_utils: TelegramUtils instance (optional, for inline keyboards)
             itinerary_service: ItineraryService instance (optional, for itinerary commands)
             places_service: PlacesService instance (optional, for places commands)
+            gemini_service: GeminiService instance (optional, for AI parsing)
         """
         self.trip_service = trip_service
         self.expense_service = expense_service
@@ -29,6 +30,7 @@ class CommandHandler:
         self.telegram_utils = telegram_utils
         self.itinerary_service = itinerary_service
         self.places_service = places_service
+        self.gemini_service = gemini_service
 
     async def handle_new_trip(self, user_id: str, chat_id: str, chat_type: str, message_text: str) -> str:
         """

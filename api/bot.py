@@ -75,7 +75,7 @@ def initialize_services():
 
         # Initialize handlers
         command_handler = CommandHandler(trip_service, expense_service, settlement_service,
-                                        telegram_utils, itinerary_service, places_service)
+                                        telegram_utils, itinerary_service, places_service, gemini)
         file_handler = FileHandler(gemini, trip_service, expense_service,
                                    settlement_service, telegram_utils, supabase)
         message_handler = MessageHandler(gemini, trip_service, supabase)
