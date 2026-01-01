@@ -43,6 +43,18 @@ class ItineraryAgent(BaseAgent):
                 if not items:
                     return {"success": False, "error": "No itinerary items found in text"}
 
+                # Format preview message (used in multiple flows below)
+                preview_lines = []
+                for i, item in enumerate(items[:5]):  # Show first 5 as preview
+                    time_str = f"{item.get('time', '')} " if item.get('time') else ""
+                    title = item.get('title', 'Activity')
+                    day = item.get('day_order', '?')
+                    preview_lines.append(f"  Day {day}: {time_str}{title}")
+
+                preview = "\n".join(preview_lines)
+                if len(items) > 5:
+                    preview += f"\n  ... and {len(items) - 5} more activities"
+
                 # Check if trip has start_date
                 trip = await trip_service.get_trip_by_id(trip_id)
                 has_start_date = trip.get('start_date') if trip else False
@@ -94,18 +106,6 @@ Please respond with a date (e.g., "January 15" or "2026-01-15")"""
                         'trip_id': trip_id
                     }
                 )
-
-                # Format preview message
-                preview_lines = []
-                for i, item in enumerate(items[:5]):  # Show first 5 as preview
-                    time_str = f"{item.get('time', '')} " if item.get('time') else ""
-                    title = item.get('title', 'Activity')
-                    day = item.get('day_order', '?')
-                    preview_lines.append(f"  Day {day}: {time_str}{title}")
-
-                preview = "\n".join(preview_lines)
-                if len(items) > 5:
-                    preview += f"\n  ... and {len(items) - 5} more activities"
 
                 message = f"""I found {len(items)} activities in your itinerary:
 
